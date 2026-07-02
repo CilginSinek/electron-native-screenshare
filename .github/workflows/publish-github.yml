@@ -1,0 +1,44 @@
+name: Publish to GitHub Packages
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  # Gate: All tests must pass before publishing
+  test:
+    uses: ./.github/workflows/test.yml
+
+  publish-github:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com/
+          scope: '@CilginSinek'
+
+      - name: Install dependencies
+        run: npm install
+
+      # GitHub Packages requires a scoped package name
+      - name: Set scoped package name for GitHub Packages
+        run: |
+          node -e "
+            const pkg = require('./package.json');
+            pkg.name = '@CilginSinek/electron-native-screenshare';
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          "
+
+      - name: Publish to GitHub Packages
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

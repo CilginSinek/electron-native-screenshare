@@ -1,0 +1,19 @@
+# Build artifacts (consumers rebuild from source via node-gyp)
+build/
+prebuilds/
+
+# Development files
+test/
+.github/
+.gitignore
+
+# Editor & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Lock files (consumers use their own)
+package-lock.json

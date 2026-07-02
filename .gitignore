@@ -1,0 +1,11 @@
+/node_modules
+/build
+*.node
+*.obj
+*.o
+*.lib
+*.exp
+*.pdb
+*.log
+.DS_Store
+Thumbs.db

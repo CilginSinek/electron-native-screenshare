@@ -1,0 +1,58 @@
+{
+  "name": "electron-native-screenshare",
+  "version": "1.0.0",
+  "description": "Cross-platform native audio capture for Electron screen sharing with process-level isolation. WASAPI (Windows), ScreenCaptureKit (macOS), PipeWire (Linux).",
+  "main": "lib/index.js",
+  "files": [
+    "lib/",
+    "src/",
+    "binding.gyp",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "gypfile": true,
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean",
+    "test": "jest --verbose --forceExit",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "electron",
+    "screen-share",
+    "audio-capture",
+    "wasapi",
+    "coreaudio",
+    "screencapturekit",
+    "pipewire",
+    "native",
+    "process-isolation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CilginSinek/electron-native-screenshare.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CilginSinek/electron-native-screenshare/issues"
+  },
+  "homepage": "https://github.com/CilginSinek/electron-native-screenshare#readme",
+  "author": "CilginSinek",
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^7.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
