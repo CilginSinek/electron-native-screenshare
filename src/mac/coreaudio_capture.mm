@@ -152,7 +152,7 @@ int CoreAudioCapture::Initialize(uint32_t processId, bool isIncludeMode, std::st
         // Configure for audio capture (48kHz stereo float32, matching Windows WASAPI output)
         SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
         config.capturesAudio = YES;
-        config.excludesCurrentProcess = NO; // handled by the filter
+        config.excludesCurrentProcessAudio = NO; // handled by the filter
         config.sampleRate = 48000;
         config.channelCount = 2;
 
@@ -162,7 +162,7 @@ int CoreAudioCapture::Initialize(uint32_t processId, bool isIncludeMode, std::st
         config.minimumFrameInterval = CMTimeMake(1, 1); // 1 fps minimum
 
         // Create the stream
-        self->pImpl->stream = [[SCStream alloc] initWithFilter:filter
+        pImpl->stream = [[SCStream alloc] initWithFilter:filter
                                                  configuration:config
                                                       delegate:nil];
 

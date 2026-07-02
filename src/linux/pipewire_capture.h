@@ -48,7 +48,7 @@ public:
      */
     void Stop();
 
-private:
+public:
     struct Impl;
     Impl* pImpl;
     std::atomic<bool> isCapturing{false};

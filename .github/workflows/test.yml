@@ -11,6 +11,8 @@ on:
 jobs:
   test-windows:
     runs-on: windows-latest
+    env:
+      GYP_MSVS_VERSION: 2022
     strategy:
       matrix:
         node-version: [18, 20, 22]

@@ -78,11 +78,13 @@ static void onStreamStateChanged(void* userdata, enum pw_stream_state old,
     }
 }
 
-static const struct pw_stream_events streamEvents = {
-    .version = PW_VERSION_STREAM_EVENTS,
-    .state_changed = onStreamStateChanged,
-    .process = onStreamProcess,
-};
+static const struct pw_stream_events streamEvents = []() {
+    struct pw_stream_events ev = {};
+    ev.version = PW_VERSION_STREAM_EVENTS;
+    ev.state_changed = onStreamStateChanged;
+    ev.process = onStreamProcess;
+    return ev;
+}();
 
 // --- Registry listener to find target node by PID ---
 
@@ -118,10 +120,12 @@ static void onRegistryGlobal(void* userdata, uint32_t id, uint32_t permissions,
     }
 }
 
-static const struct pw_registry_events registryEvents = {
-    .version = PW_VERSION_REGISTRY_EVENTS,
-    .global = onRegistryGlobal,
-};
+static const struct pw_registry_events registryEvents = []() {
+    struct pw_registry_events ev = {};
+    ev.version = PW_VERSION_REGISTRY_EVENTS;
+    ev.global = onRegistryGlobal;
+    return ev;
+}();
 
 // --- PipewireCapture implementation ---
 
@@ -210,11 +214,10 @@ void PipewireCapture::Start(DataCallback callback) {
         uint8_t buffer[4096];
         struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
 
-        struct spa_audio_info_raw rawInfo = SPA_AUDIO_INFO_RAW_INIT(
-            .format = SPA_AUDIO_FORMAT_F32,
-            .rate = 48000,
-            .channels = 2
-        );
+        struct spa_audio_info_raw rawInfo = {};
+        rawInfo.format = SPA_AUDIO_FORMAT_F32;
+        rawInfo.rate = 48000;
+        rawInfo.channels = 2;
 
         const struct spa_pod* params[1];
         params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &rawInfo);
