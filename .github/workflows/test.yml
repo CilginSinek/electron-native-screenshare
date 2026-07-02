@@ -11,8 +11,6 @@ on:
 jobs:
   test-windows:
     runs-on: windows-latest
-    env:
-      GYP_MSVS_VERSION: 2022
     strategy:
       matrix:
         node-version: [18, 20, 22]
@@ -24,6 +22,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+
+      - name: Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure msvs_version
+        run: npm config set msvs_version 2022
 
       - name: Install dependencies
         run: npm install
