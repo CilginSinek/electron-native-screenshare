@@ -27,7 +27,7 @@ jobs:
           scope: '@CilginSinek'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --ignore-scripts
 
       # GitHub Packages requires a scoped package name
       - name: Set scoped package name for GitHub Packages
@@ -39,6 +39,6 @@ jobs:
           "
 
       - name: Publish to GitHub Packages
-        run: npm publish --access public
+        run: npm publish --access public --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
