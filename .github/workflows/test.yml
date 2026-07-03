@@ -10,7 +10,7 @@ on:
 
 jobs:
   test-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     strategy:
       matrix:
         node-version: [18, 20, 22]
