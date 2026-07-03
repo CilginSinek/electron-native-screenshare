@@ -17,14 +17,12 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 20
-          registry-url: https://npm.pkg.github.com/
-          scope: '@CilginSinek'
+          node-version: 24
 
       - name: Install dependencies
         run: npm install --ignore-scripts
@@ -39,6 +37,9 @@ jobs:
           "
 
       - name: Publish to GitHub Packages
-        run: npm publish --access public --ignore-scripts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: JS-DevTools/npm-publish@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          registry: https://npm.pkg.github.com
+          access: public
+          ignore-scripts: true
