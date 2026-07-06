@@ -11,14 +11,102 @@
  */
 
 #include "pipewire_capture.h"
+#ifdef HAVE_PIPEWIRE
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/debug/types.h>
 #include <spa/param/audio/type-info.h>
+#include <dlfcn.h>
+
+struct PipewireSyms {
+    void (*init)(int*, char***);
+    void (*deinit)(void);
+    struct pw_main_loop* (*main_loop_new)(const struct spa_dict*);
+    void (*main_loop_destroy)(struct pw_main_loop*);
+    struct pw_loop* (*main_loop_get_loop)(struct pw_main_loop*);
+    int (*main_loop_quit)(struct pw_main_loop*);
+    int (*main_loop_run)(struct pw_main_loop*);
+    struct pw_context* (*context_new)(struct pw_loop*, struct pw_properties*, size_t);
+    void (*context_destroy)(struct pw_context*);
+    struct pw_core* (*context_connect)(struct pw_context*, struct pw_properties*, size_t);
+    int (*core_disconnect)(struct pw_core*);
+    struct pw_stream* (*stream_new)(struct pw_core*, const char*, struct pw_properties*);
+    void (*stream_destroy)(struct pw_stream*);
+    struct pw_properties* (*properties_new)(const char*, ...) __attribute__((sentinel));
+    int (*properties_set)(struct pw_properties*, const char*, const char*);
+    const char* (*stream_state_as_string)(enum pw_stream_state);
+    void (*proxy_destroy)(struct pw_proxy*);
+    int (*loop_iterate)(struct pw_loop*, int);
+};
+static PipewireSyms* pw_syms = nullptr;
+
+static bool load_pipewire() {
+    if (pw_syms) return true;
+    void* handle = dlopen("libpipewire-0.3.so.0", RTLD_LAZY);
+    if (!handle) return false;
+
+    PipewireSyms* syms = new PipewireSyms();
+    syms->init = (decltype(syms->init))dlsym(handle, "pw_init");
+    syms->deinit = (decltype(syms->deinit))dlsym(handle, "pw_deinit");
+    syms->main_loop_new = (decltype(syms->main_loop_new))dlsym(handle, "pw_main_loop_new");
+    syms->main_loop_destroy = (decltype(syms->main_loop_destroy))dlsym(handle, "pw_main_loop_destroy");
+    syms->main_loop_get_loop = (decltype(syms->main_loop_get_loop))dlsym(handle, "pw_main_loop_get_loop");
+    syms->main_loop_quit = (decltype(syms->main_loop_quit))dlsym(handle, "pw_main_loop_quit");
+    syms->main_loop_run = (decltype(syms->main_loop_run))dlsym(handle, "pw_main_loop_run");
+    syms->context_new = (decltype(syms->context_new))dlsym(handle, "pw_context_new");
+    syms->context_destroy = (decltype(syms->context_destroy))dlsym(handle, "pw_context_destroy");
+    syms->context_connect = (decltype(syms->context_connect))dlsym(handle, "pw_context_connect");
+    syms->core_disconnect = (decltype(syms->core_disconnect))dlsym(handle, "pw_core_disconnect");
+    syms->stream_new = (decltype(syms->stream_new))dlsym(handle, "pw_stream_new");
+    syms->stream_destroy = (decltype(syms->stream_destroy))dlsym(handle, "pw_stream_destroy");
+    syms->properties_new = (decltype(syms->properties_new))dlsym(handle, "pw_properties_new");
+    syms->properties_set = (decltype(syms->properties_set))dlsym(handle, "pw_properties_set");
+    syms->stream_state_as_string = (decltype(syms->stream_state_as_string))dlsym(handle, "pw_stream_state_as_string");
+    syms->proxy_destroy = (decltype(syms->proxy_destroy))dlsym(handle, "pw_proxy_destroy");
+    syms->loop_iterate = (decltype(syms->loop_iterate))dlsym(handle, "pw_loop_iterate");
+
+    if (!syms->init || !syms->context_new || !syms->stream_new) {
+        delete syms;
+        return false;
+    }
+    pw_syms = syms;
+    return true;
+}
+
+#define pw_init pw_syms->init
+#define pw_deinit pw_syms->deinit
+#define pw_main_loop_new pw_syms->main_loop_new
+#define pw_main_loop_destroy pw_syms->main_loop_destroy
+#define pw_main_loop_get_loop pw_syms->main_loop_get_loop
+#define pw_main_loop_quit pw_syms->main_loop_quit
+#define pw_main_loop_run pw_syms->main_loop_run
+#define pw_context_new pw_syms->context_new
+#define pw_context_destroy pw_syms->context_destroy
+#define pw_context_connect pw_syms->context_connect
+#define pw_core_disconnect pw_syms->core_disconnect
+#define pw_stream_new pw_syms->stream_new
+#define pw_stream_destroy pw_syms->stream_destroy
+#define pw_properties_new pw_syms->properties_new
+#define pw_properties_set pw_syms->properties_set
+#define pw_stream_state_as_string pw_syms->stream_state_as_string
+#define pw_proxy_destroy pw_syms->proxy_destroy
+#define pw_loop_iterate pw_syms->loop_iterate
+
+#else
+// Define dummy types for the compilation to pass when HAVE_PIPEWIRE is missing
+struct pw_main_loop {};
+struct pw_context {};
+struct pw_core {};
+struct pw_stream {};
+struct pw_registry {};
+struct spa_hook {};
+#endif
+
 #include <iostream>
 #include <thread>
 #include <mutex>
 #include <cstring>
+
 
 // --- Pimpl internals ---
 
@@ -140,6 +228,12 @@ PipewireCapture::~PipewireCapture() {
 }
 
 int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::string& outError) {
+#ifdef HAVE_PIPEWIRE
+    if (!load_pipewire()) {
+        outError = "PipeWire shared library not found. Audio capture is unavailable.";
+        return -1;
+    }
+
     pImpl->targetPid = processId;
     pImpl->includeMode = isIncludeMode;
 
@@ -201,6 +295,10 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
     }
 
     return 0;
+#else
+    outError = "PipeWire support was not compiled in this build.";
+    return -1;
+#endif
 }
 
 void PipewireCapture::Start(DataCallback callback) {
@@ -306,10 +404,55 @@ void PipewireCapture::Stop() {
 
 // --- getPidFromWindowId using X11 _NET_WM_PID ---
 
+#ifdef HAVE_X11
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
+#include <dlfcn.h>
+
+struct X11Syms {
+    Display* (*XOpenDisplay)(const char*);
+    int (*XCloseDisplay)(Display*);
+    Atom (*XInternAtom)(Display*, const char*, Bool);
+    int (*XGetWindowProperty)(Display*, Window, Atom, long, long, Bool, Atom, Atom*, int*, unsigned long*, unsigned long*, unsigned char**);
+    int (*XFree)(void*);
+};
+static X11Syms* x11_syms = nullptr;
+
+static bool load_x11() {
+    if (x11_syms) return true;
+    void* handle = dlopen("libX11.so.6", RTLD_LAZY);
+    if (!handle) handle = dlopen("libX11.so", RTLD_LAZY);
+    if (!handle) return false;
+
+    X11Syms* syms = new X11Syms();
+    syms->XOpenDisplay = (decltype(syms->XOpenDisplay))dlsym(handle, "XOpenDisplay");
+    syms->XCloseDisplay = (decltype(syms->XCloseDisplay))dlsym(handle, "XCloseDisplay");
+    syms->XInternAtom = (decltype(syms->XInternAtom))dlsym(handle, "XInternAtom");
+    syms->XGetWindowProperty = (decltype(syms->XGetWindowProperty))dlsym(handle, "XGetWindowProperty");
+    syms->XFree = (decltype(syms->XFree))dlsym(handle, "XFree");
+
+    if (!syms->XOpenDisplay || !syms->XGetWindowProperty) {
+        delete syms;
+        return false;
+    }
+    x11_syms = syms;
+    return true;
+}
+
+#define XOpenDisplay x11_syms->XOpenDisplay
+#define XCloseDisplay x11_syms->XCloseDisplay
+#define XInternAtom x11_syms->XInternAtom
+#define XGetWindowProperty x11_syms->XGetWindowProperty
+#define XFree x11_syms->XFree
+#endif
 
 uint32_t getPidFromWindowId(uint32_t windowId) {
+#ifdef HAVE_X11
+    if (!load_x11()) {
+        std::cerr << "[electron-native-screenshare] X11 shared library not found. Cannot resolve PID." << std::endl;
+        return 0;
+    }
+
     Display* display = XOpenDisplay(nullptr);
     if (!display) {
         std::cerr << "[electron-native-screenshare] Cannot open X11 display. "
@@ -341,4 +484,8 @@ uint32_t getPidFromWindowId(uint32_t windowId) {
 
     XCloseDisplay(display);
     return pid;
+#else
+    std::cerr << "[electron-native-screenshare] X11 support was not compiled. Cannot resolve PID." << std::endl;
+    return 0;
+#endif
 }
