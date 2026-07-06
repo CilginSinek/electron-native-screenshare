@@ -85,3 +85,26 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  test-linux-no-deps:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies (Without Dev Packages)
+        run: npm install
+
+      - name: Build native module (Fallback Mode)
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
