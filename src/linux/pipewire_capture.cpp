@@ -11,7 +11,13 @@
  */
 
 #include "pipewire_capture.h"
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <cstring>
+
 #ifdef HAVE_PIPEWIRE
+
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/debug/types.h>
@@ -92,24 +98,7 @@ static bool load_pipewire() {
 #define pw_proxy_destroy pw_syms->proxy_destroy
 #define pw_loop_iterate pw_syms->loop_iterate
 
-#else
-// Define dummy types for the compilation to pass when HAVE_PIPEWIRE is missing
-struct pw_main_loop {};
-struct pw_context {};
-struct pw_core {};
-struct pw_stream {};
-struct pw_registry {};
-struct spa_hook {};
-#endif
-
-#include <iostream>
-#include <thread>
-#include <mutex>
-#include <cstring>
-
-
 // --- Pimpl internals ---
-
 struct PipewireCapture::Impl {
     struct pw_main_loop* loop = nullptr;
     struct pw_context* context = nullptr;
@@ -129,11 +118,8 @@ struct PipewireCapture::Impl {
 };
 
 // --- PipeWire stream event handlers ---
-
 static void onStreamProcess(void* userdata) {
     PipewireCapture* self = static_cast<PipewireCapture*>(userdata);
-    // Access through a friend-like pattern via the public Start() that stores the callback
-    // The actual buffer reading is done here
     struct pw_buffer* b = pw_stream_dequeue_buffer(self->pImpl->stream);
     if (!b) return;
 
@@ -175,7 +161,6 @@ static const struct pw_stream_events streamEvents = []() {
 }();
 
 // --- Registry listener to find target node by PID ---
-
 static void onRegistryGlobal(void* userdata, uint32_t id, uint32_t permissions,
                               const char* type, uint32_t version,
                               const struct spa_dict* props) {
@@ -187,9 +172,7 @@ static void onRegistryGlobal(void* userdata, uint32_t id, uint32_t permissions,
     if (!mediaClass) return;
 
     if (impl->includeMode) {
-        // Include mode: find the node belonging to target PID
         if (strcmp(mediaClass, "Stream/Output/Audio") != 0) return;
-
         const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
         if (!pidStr) return;
 
@@ -198,9 +181,7 @@ static void onRegistryGlobal(void* userdata, uint32_t id, uint32_t permissions,
             impl->targetNodeId = id;
         }
     } else {
-        // Exclude mode: find the default sink's monitor
         if (strcmp(mediaClass, "Audio/Sink") == 0) {
-            // Use the first audio sink as the monitor target
             if (impl->targetNodeId == PW_ID_ANY) {
                 impl->targetNodeId = id;
             }
@@ -214,6 +195,14 @@ static const struct pw_registry_events registryEvents = []() {
     ev.global = onRegistryGlobal;
     return ev;
 }();
+
+#else
+
+// Dummy implementation for compilation to pass when HAVE_PIPEWIRE is missing
+struct PipewireCapture::Impl {};
+
+#endif
+
 
 // --- PipewireCapture implementation ---
 
@@ -237,7 +226,6 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
     pImpl->targetPid = processId;
     pImpl->includeMode = isIncludeMode;
 
-    // Emit warning for exclude mode — Linux limitation
     if (!isIncludeMode) {
         std::cerr << "[electron-native-screenshare] WARNING: On Linux, exclude mode captures all "
                   << "system audio from the default output. Per-process audio exclusion is not "
@@ -245,7 +233,6 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
                   << ") audio will still be present in the capture." << std::endl;
     }
 
-    // Initialize PipeWire
     pw_init(nullptr, nullptr);
     pImpl->pipewireInitialized = true;
 
@@ -267,7 +254,6 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
         return -3;
     }
 
-    // Enumerate nodes to find target
     pImpl->registry = pw_core_get_registry(pImpl->core, PW_VERSION_REGISTRY, 0);
     if (!pImpl->registry) {
         outError = "Failed to get PipeWire registry";
@@ -277,13 +263,9 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
     spa_zero(pImpl->registryListener);
     pw_registry_add_listener(pImpl->registry, &pImpl->registryListener, &registryEvents, pImpl);
 
-    // Process pending events to discover nodes (timeout: 500ms)
-    // We run the loop briefly to let the registry populate
     struct pw_loop* loop = pw_main_loop_get_loop(pImpl->loop);
-
-    // Flush and process for a short duration
     for (int i = 0; i < 50; i++) {
-        int result = pw_loop_iterate(loop, 10); // 10ms per iteration
+        int result = pw_loop_iterate(loop, 10);
         if (result < 0) break;
         if (pImpl->targetNodeId != PW_ID_ANY) break;
     }
@@ -302,13 +284,13 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
 }
 
 void PipewireCapture::Start(DataCallback callback) {
+#ifdef HAVE_PIPEWIRE
     if (isCapturing.load() || !pImpl->loop) return;
 
     onData = callback;
     isCapturing.store(true);
 
     pImpl->captureThread = std::thread([this]() {
-        // Audio format: float32, stereo, 48kHz
         uint8_t buffer[4096];
         struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
 
@@ -320,7 +302,6 @@ void PipewireCapture::Start(DataCallback callback) {
         const struct spa_pod* params[1];
         params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &rawInfo);
 
-        // Create the capture stream
         struct pw_properties* props = pw_properties_new(
             PW_KEY_MEDIA_TYPE, "Audio",
             PW_KEY_MEDIA_CATEGORY, "Capture",
@@ -329,12 +310,10 @@ void PipewireCapture::Start(DataCallback callback) {
         );
 
         if (pImpl->includeMode && pImpl->targetNodeId != PW_ID_ANY) {
-            // Include mode: target the specific node
             char nodeIdStr[32];
             snprintf(nodeIdStr, sizeof(nodeIdStr), "%u", pImpl->targetNodeId);
             pw_properties_set(props, PW_KEY_TARGET_OBJECT, nodeIdStr);
         } else if (!pImpl->includeMode && pImpl->targetNodeId != PW_ID_ANY) {
-            // Exclude mode: connect to default sink monitor
             char nodeIdStr[32];
             snprintf(nodeIdStr, sizeof(nodeIdStr), "%u", pImpl->targetNodeId);
             pw_properties_set(props, PW_KEY_TARGET_OBJECT, nodeIdStr);
@@ -359,12 +338,13 @@ void PipewireCapture::Start(DataCallback callback) {
             params, 1
         );
 
-        // Run the main loop — blocks until Stop() quits it
         pw_main_loop_run(pImpl->loop);
     });
+#endif
 }
 
 void PipewireCapture::Stop() {
+#ifdef HAVE_PIPEWIRE
     if (!isCapturing.load()) return;
     isCapturing.store(false);
 
@@ -400,6 +380,7 @@ void PipewireCapture::Stop() {
         pw_deinit();
         pImpl->pipewireInitialized = false;
     }
+#endif
 }
 
 // --- getPidFromWindowId using X11 _NET_WM_PID ---
