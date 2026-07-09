@@ -30,9 +30,15 @@ Napi::Value StartCapture(const Napi::CallbackInfo& info) {
 
     std::string errorMsg;
     HRESULT hr = capture.Initialize(processId, isIncludeMode, errorMsg);
-    if (FAILED(hr) || !errorMsg.empty()) {
-        char buf[256];
-        snprintf(buf, sizeof(buf), "WASAPI Init Failed: %s (HRESULT: 0x%08lX)", errorMsg.c_str(), hr);
+    if (FAILED(hr)) {
+        // Build a message that is immediately actionable from the JS catch block
+        // without needing to inspect native stdout.
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "WASAPI Init Failed [pid=%lu, includeMode=%s]: %s",
+            (unsigned long)processId,
+            isIncludeMode ? "true" : "false",
+            errorMsg.c_str());
         Napi::TypeError::New(env, buf).ThrowAsJavaScriptException();
         return env.Null();
     }
