@@ -52,7 +52,7 @@ static std::string HrToString(HRESULT hr) {
         case AUDCLNT_E_DEVICE_INVALIDATED:        return "AUDCLNT_E_DEVICE_INVALIDATED (0x88890004) - audio device was removed or "
                                                          "format changed while in use";
         case AUDCLNT_E_NOT_STOPPED:               return "AUDCLNT_E_NOT_STOPPED (0x88890005) - stream must be stopped first";
-        case AUDCLNT_E_BAD_BUFFER_SIZE:           return "AUDCLNT_E_BAD_BUFFER_SIZE (0x88890006) - buffer size out of range";
+        case (HRESULT)0x88890006:              return "AUDCLNT_E_BAD_BUFFER_SIZE (0x88890006) - buffer size out of range";
         case AUDCLNT_E_OUT_OF_ORDER:              return "AUDCLNT_E_OUT_OF_ORDER (0x88890007) - previous GetBuffer not released";
         case AUDCLNT_E_UNSUPPORTED_FORMAT:        return "AUDCLNT_E_UNSUPPORTED_FORMAT (0x88890008) - requested WAVEFORMATEX is not "
                                                          "supported. Try letting Windows choose the format via GetMixFormat()";
@@ -92,7 +92,7 @@ static std::string HrToString(HRESULT hr) {
                                                          "The calling process may lack permission to capture audio from the target process. "
                                                          "Check that the app is not sandboxed without audio capability";
         case HRESULT(0x80070006):                 return "E_HANDLE (0x80070006) - invalid handle";
-        case HRESULT(0x80070057):                 return "E_INVALIDARG (0x80070057) - invalid argument passed to WASAPI";
+        // Note: 0x80070057 = E_INVALIDARG, already covered above.
         case HRESULT(0x80040154):                 return "REGDB_E_CLASSNOTREG (0x80040154) - COM class not registered. "
                                                          "ActivateAudioInterfaceAsync requires Windows 10 build 2004 (20H1) or later";
         case HRESULT(0x80070490):                 return "ERROR_NOT_FOUND (0x80070490) - audio device not found";
