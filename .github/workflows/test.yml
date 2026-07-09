@@ -38,55 +38,37 @@ jobs:
 
       # ── Virtual Audio Device Setup ──────────────────────────────────────────
       # GitHub Actions Windows runners have no physical audio output.
-      # We install VB-CABLE (a virtual loopback driver) so WASAPI has a real
-      # render endpoint to capture from.  After this step `startCapture` can
-      # actually return data instead of E_UNEXPECTED / AUDCLNT_E_ENDPOINT_CREATE_FAILED.
+      # We install VB-CABLE via Chocolatey (pre-installed on all windows-* runners).
+      # choco completes without requiring a reboot unlike the direct installer.
       - name: Install VB-CABLE virtual audio driver
         shell: powershell
         run: |
-          $installer = "$env:TEMP\VBCABLE_Setup_x64.exe"
-          Invoke-WebRequest `
-            -Uri "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip" `
-            -OutFile "$env:TEMP\vbcable.zip"
-          Expand-Archive "$env:TEMP\vbcable.zip" -DestinationPath "$env:TEMP\vbcable"
-          # Silent install — requires elevated rights (runners are admin by default)
-          Start-Process `
-            -FilePath "$env:TEMP\vbcable\VBCABLE_Setup_x64.exe" `
-            -ArgumentList "-si" `
-            -Wait -Verb RunAs
-          Write-Host "VB-CABLE installation triggered"
-
-      - name: Wait for audio service to register new device
-        shell: powershell
-        run: |
-          Start-Sleep -Seconds 5
-          # Verify a render endpoint is now present
-          $devices = Get-PnpDevice -Class "AudioEndpoint" -Status "OK" | Where-Object {
-            $_.FriendlyName -like "*CABLE*" -or $_.FriendlyName -like "*VB-*"
-          }
+          choco install vb-cable -y --no-progress
+          # Give the audio service time to enumerate the new device
+          Start-Sleep -Seconds 8
+          $devices = Get-PnpDevice -Class "AudioEndpoint" -Status "OK" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FriendlyName -like "*CABLE*" -or $_.FriendlyName -like "*VB-*" }
           if ($devices) {
-            Write-Host "Virtual audio device found: $($devices[0].FriendlyName)"
+            Write-Host "Virtual audio device ready: $($devices[0].FriendlyName)"
           } else {
-            Write-Warning "VB-CABLE device not detected — capture tests may be skipped"
+            Write-Warning "VB-CABLE not detected — audio capture tests will be skipped"
           }
 
       - name: Play sine wave into virtual device (background)
         shell: powershell
         run: |
-          # Install ffmpeg via Chocolatey (pre-installed on windows-2022 runners)
-          # Pipe a 440 Hz sine wave to the default output for 30 seconds —
-          # long enough to cover the full test run.
-          Start-Process -NoNewWindow -FilePath "ffmpeg" -ArgumentList `
-            "-f lavfi -i sine=frequency=440:duration=30 -f dshow -i audio=""CABLE Input (VB-Audio Virtual Cable)"" -ar 48000 -ac 2 -y NUL"
-          # Fallback: use PowerShell MediaPlayer if ffmpeg fails
-          try {
-            Add-Type -AssemblyName presentationCore
-            $player = New-Object system.windows.media.mediaplayer
-            # Generate a tiny WAV in memory and play it in a loop — not needed if ffmpeg worked
-          } catch {}
+          # ffmpeg is pre-installed on windows-2022 runners.
+          # Stream a 440 Hz sine for 120 s — covers the full test run.
+          # -f dshow writes to the DirectShow device (CABLE Input).
+          Start-Process -NoNewWindow -FilePath "ffmpeg" -ArgumentList (
+            "-f lavfi -i sine=frequency=440:duration=120 " +
+            "-f dshow -audio_device_name ""CABLE Input (VB-Audio Virtual Cable)"" " +
+            "-ar 48000 -ac 2 -y NUL"
+          )
+          Start-Sleep -Seconds 2
           Write-Host "Sine wave playback started"
 
-      - name: Set VIRTUAL_AUDIO_READY flag and run tests
+      - name: Run tests
         shell: powershell
         env:
           VIRTUAL_AUDIO_READY: "1"

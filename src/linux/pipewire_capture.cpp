@@ -339,6 +339,33 @@ void PipewireCapture::Start(DataCallback callback) {
         );
 
         pw_main_loop_run(pImpl->loop);
+
+        // ── Cleanup: all PW objects must be destroyed on THIS thread ──────────
+        // Destroying from Stop() (a different thread) causes the segfault.
+        if (pImpl->stream) {
+            pw_stream_destroy(pImpl->stream);
+            pImpl->stream = nullptr;
+        }
+        if (pImpl->registry) {
+            pw_proxy_destroy((struct pw_proxy*)pImpl->registry);
+            pImpl->registry = nullptr;
+        }
+        if (pImpl->core) {
+            pw_core_disconnect(pImpl->core);
+            pImpl->core = nullptr;
+        }
+        if (pImpl->context) {
+            pw_context_destroy(pImpl->context);
+            pImpl->context = nullptr;
+        }
+        if (pImpl->loop) {
+            pw_main_loop_destroy(pImpl->loop);
+            pImpl->loop = nullptr;
+        }
+        if (pImpl->pipewireInitialized) {
+            pw_deinit();
+            pImpl->pipewireInitialized = false;
+        }
     });
 #endif
 }
@@ -348,6 +375,7 @@ void PipewireCapture::Stop() {
     if (!isCapturing.load()) return;
     isCapturing.store(false);
 
+    // Signal the loop to exit — the captureThread will handle all cleanup.
     if (pImpl->loop) {
         pw_main_loop_quit(pImpl->loop);
     }
@@ -355,31 +383,7 @@ void PipewireCapture::Stop() {
     if (pImpl->captureThread.joinable()) {
         pImpl->captureThread.join();
     }
-
-    if (pImpl->stream) {
-        pw_stream_destroy(pImpl->stream);
-        pImpl->stream = nullptr;
-    }
-    if (pImpl->registry) {
-        pw_proxy_destroy((struct pw_proxy*)pImpl->registry);
-        pImpl->registry = nullptr;
-    }
-    if (pImpl->core) {
-        pw_core_disconnect(pImpl->core);
-        pImpl->core = nullptr;
-    }
-    if (pImpl->context) {
-        pw_context_destroy(pImpl->context);
-        pImpl->context = nullptr;
-    }
-    if (pImpl->loop) {
-        pw_main_loop_destroy(pImpl->loop);
-        pImpl->loop = nullptr;
-    }
-    if (pImpl->pipewireInitialized) {
-        pw_deinit();
-        pImpl->pipewireInitialized = false;
-    }
+    // All PW objects are now nullptr (destroyed inside captureThread above).
 #endif
 }
 
