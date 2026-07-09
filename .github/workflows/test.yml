@@ -174,58 +174,96 @@ jobs:
       - name: Build native module
         run: npm run build
 
-      - name: Start PipeWire daemon and create virtual null sink
+      - name: Start PipeWire daemon and virtual null sink
+        # XDG_RUNTIME_DIR MUST be exported before pipewire starts so the daemon
+        # creates its socket at the same path the client will look for it.
+        # Without this, pw_context_connect() returns -3 (ENOENT — socket not found).
         run: |
-          # Start PipeWire in the background (no physical hardware needed)
-          pipewire &
-          PIPEWIRE_PID=$!
-          sleep 2
-          echo "PipeWire PID: $PIPEWIRE_PID"
+          export XDG_RUNTIME_DIR=/tmp/pipewire-runtime
+          mkdir -p $XDG_RUNTIME_DIR
 
-          # Create a virtual null sink so ffmpeg has somewhere to write audio
-          pw-cli create-node adapter '{
-            factory.name=support.null-audio-sink
-            node.name=null-sink
-            media.class=Audio/Sink
-            object.linger=true
-            audio.rate=48000
-            audio.channels=2
-          }' &
+          # Launch PipeWire daemon (headless — no physical hardware needed)
+          pipewire &
+          sleep 2
+
+          # Verify the socket exists before proceeding
+          if [ ! -S "$XDG_RUNTIME_DIR/pipewire-0" ]; then
+            echo "ERROR: PipeWire socket not found at $XDG_RUNTIME_DIR/pipewire-0"
+            ls -la $XDG_RUNTIME_DIR || true
+            exit 1
+          fi
+          echo "PipeWire socket ready: $XDG_RUNTIME_DIR/pipewire-0"
+
+          # pw-loopback creates a capture source backed by a null sink —
+          # this is the correct way to get a readable audio stream without hardware.
+          PIPEWIRE_REMOTE=$XDG_RUNTIME_DIR/pipewire-0 \
+            pw-loopback --capture-props='media.class=Audio/Source node.name=null-source' &
           sleep 1
 
-          # Feed a 440 Hz sine wave into the null sink for 30 s (covers full test run)
-          ffmpeg -f lavfi -i sine=frequency=440:duration=30 \
-            -f pulse -i default \
-            -ar 48000 -ac 2 -y /dev/null &
-          echo "Audio playback started"
+          # Feed a 440 Hz sine wave to PipeWire's default sink for 60 s
+          # (covers the full Jest run including timeouts)
+          PIPEWIRE_REMOTE=$XDG_RUNTIME_DIR/pipewire-0 \
+            ffmpeg -f lavfi -i sine=frequency=440:duration=60 \
+              -f pipewire -i default \
+              -ar 48000 -ac 2 -y /dev/null 2>/dev/null &
+          echo "Sine wave playback started"
 
       - name: Run tests
         env:
           VIRTUAL_AUDIO_READY: "1"
           XDG_RUNTIME_DIR: /tmp/pipewire-runtime
-        run: |
-          mkdir -p /tmp/pipewire-runtime
-          npm test
+          PIPEWIRE_REMOTE: /tmp/pipewire-runtime/pipewire-0
+        run: npm test
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # LINUX NO-DEPS — Graceful degradation test
+  #
+  # Purpose: verify that the JS layer behaves correctly when the native
+  # PipeWire/X11 dev packages are absent and the .node addon cannot be built.
+  # Expected outcome:
+  #   - isAvailable() → false
+  #   - getLoadError() → descriptive string
+  #   - All integration tests are skipped (not failed)
+  #   - Pure JS tests (module exports, argument validation) all pass
+  # ───────────────────────────────────────────────────────────────────────────
   test-linux-no-deps:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         node-version: [18, 20, 22]
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Install dependencies (Without Dev Packages)
-        run: npm install
+      - name: Install JS dependencies only (skip native build)
+        # --ignore-scripts prevents node-gyp rebuild from running automatically.
+        # No libpipewire-0.3-dev or libx11-dev → the .node addon will not exist.
+        run: npm install --ignore-scripts
 
-      - name: Build native module (Fallback Mode)
-        run: npm run build
+      - name: Verify graceful degradation (isAvailable must be false)
+        run: |
+          node -e "
+            const mod = require('./lib/index');
+            if (mod.isAvailable()) {
+              console.error('FAIL: isAvailable() returned true without a native build');
+              process.exit(1);
+            }
+            const err = mod.getLoadError();
+            if (!err || err.length === 0) {
+              console.error('FAIL: getLoadError() is empty — missing descriptive error');
+              process.exit(2);
+            }
+            console.log('OK: graceful degradation working. Error message preview:');
+            console.log(err.substring(0, 120));
+          "
 
-      - name: Run tests
+      - name: Run tests (native unavailable — only JS-layer tests execute)
+        # VIRTUAL_AUDIO_READY is intentionally NOT set so audio capture
+        # tests are skipped instead of attempted.
         run: npm test
