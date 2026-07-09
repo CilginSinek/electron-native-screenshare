@@ -1,6 +1,6 @@
 {
   "name": "electron-native-screenshare",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cross-platform native audio capture for Electron screen sharing with process-level isolation. WASAPI (Windows), ScreenCaptureKit (macOS), PipeWire (Linux).",
   "main": "lib/index.js",
   "files": [
