@@ -376,7 +376,10 @@ void PipewireCapture::Start(DataCallback callback) {
             params, 1
         );
 
-        pw_main_loop_run(pImpl->loop);
+        struct pw_loop* rawLoop = pw_main_loop_get_loop(pImpl->loop);
+        while (isCapturing.load()) {
+            pw_loop_iterate(rawLoop, 100 /* ms timeout */);
+        }
 
         // ── Cleanup: all PW objects MUST be destroyed on THIS thread ──────────
         // PipeWire objects are not thread-safe; destroying from Stop() (a different
@@ -415,11 +418,7 @@ void PipewireCapture::Stop() {
     if (!isCapturing.load()) return;
     isCapturing.store(false);
 
-    // Signal the loop to exit — the captureThread will handle all cleanup.
-    if (pImpl->loop) {
-        pw_main_loop_quit(pImpl->loop);
-    }
-
+    // The captureThread will naturally wake up within 100ms and handle cleanup.
     if (pImpl->captureThread.joinable()) {
         pImpl->captureThread.join();
     }
