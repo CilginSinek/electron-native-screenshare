@@ -188,6 +188,7 @@ jobs:
 
           # Launch PipeWire daemon (headless — no physical hardware needed)
           pipewire &
+          wireplumber &
           sleep 2
 
           # Verify the socket exists before proceeding
@@ -246,6 +247,7 @@ jobs:
             libpipewire-0.3-dev \
             pipewire \
             pipewire-pulse \
+            wireplumber \
             ffmpeg
           # libx11-dev is intentionally omitted: we test without X11 support.
           # The build system detects HAVE_X11 via pkg-config; without libx11-dev
@@ -272,8 +274,10 @@ jobs:
             --log-target=file:/tmp/pw-nodeps/pulseaudio.log 2>/dev/null || true
           sleep 2
 
-          # Also start PipeWire daemon so our native module can connect.
+          # Also start PipeWire daemon and WirePlumber so our native module can connect.
           pipewire &
+          sleep 1
+          wireplumber &
           sleep 2
 
           if [ -S "$XDG_RUNTIME_DIR/pipewire-0" ]; then
