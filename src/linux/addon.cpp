@@ -58,6 +58,10 @@ Napi::Value StartCapture(const Napi::CallbackInfo& info) {
         auto* payload = new Payload{ std::vector<uint8_t>(data, data + length), metadata };
 
         auto napiCallback = [](Napi::Env env, Napi::Function jsCallback, Payload* p) {
+            if (!tsfn) {
+                delete p;
+                return;
+            }
             Napi::Object metaObj = Napi::Object::New(env);
             metaObj.Set("sampleRate", p->meta.sampleRate);
             metaObj.Set("channels", p->meta.channels);
