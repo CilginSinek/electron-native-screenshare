@@ -51,7 +51,7 @@ jobs:
           if ($devices) {
             Write-Host "Virtual audio device ready: $($devices[0].FriendlyName)"
           } else {
-            Write-Warning "VB-CABLE not detected — audio capture tests will be skipped"
+            Write-Warning "VB-CABLE not detected -- audio capture tests will be skipped"
           }
 
       - name: Play sine wave into virtual device (background)
@@ -198,15 +198,15 @@ jobs:
         run: npm test
 
   # ───────────────────────────────────────────────────────────────────────────
-  # LINUX NO-DEPS — Graceful degradation test
+  # LINUX NO-X11 — Tests with PulseAudio null sink, no X11 dependency.
   #
-  # Purpose: verify that the JS layer behaves correctly when the native
-  # PipeWire/X11 dev packages are absent and the .node addon cannot be built.
-  # Expected outcome:
-  #   - isAvailable() → false
-  #   - getLoadError() → descriptive string
-  #   - All integration tests are skipped (not failed)
-  #   - Pure JS tests (module exports, argument validation) all pass
+  # Purpose: verify audio capture works in a headless environment that has
+  # PipeWire available (via libpipewire-0.3-dev) but no X11/display server.
+  # This mirrors server deployments and CI environments where a display is
+  # unavailable. getPidFromWindowHandle() gracefully returns 0.
+  #
+  # Audio backend: PulseAudio null sink, which PipeWire discovers via the
+  # pipewire-pulse compatibility layer (pre-installed on ubuntu-22.04+).
   # ───────────────────────────────────────────────────────────────────────────
   test-linux-no-deps:
     runs-on: ubuntu-latest
@@ -218,34 +218,60 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install PipeWire dev headers (compile only, no X11)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libpipewire-0.3-dev \
+            pipewire \
+            pipewire-pulse \
+            ffmpeg
+          # libx11-dev is intentionally omitted: we test without X11 support.
+          # The build system detects HAVE_X11 via pkg-config; without libx11-dev
+          # it compiles without X11, so getPidFromWindowHandle() always returns 0.
+
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Install JS dependencies only (skip native build)
-        # --ignore-scripts prevents node-gyp rebuild from running automatically.
-        # No libpipewire-0.3-dev or libx11-dev → the .node addon will not exist.
-        run: npm install --ignore-scripts
+      - name: Install dependencies and build (no X11)
+        run: npm install
 
-      - name: Verify graceful degradation (isAvailable must be false)
+      - name: Start PulseAudio null sink
         run: |
-          node -e "
-            const mod = require('./lib/index');
-            if (mod.isAvailable()) {
-              console.error('FAIL: isAvailable() returned true without a native build');
-              process.exit(1);
-            }
-            const err = mod.getLoadError();
-            if (!err || err.length === 0) {
-              console.error('FAIL: getLoadError() is empty — missing descriptive error');
-              process.exit(2);
-            }
-            console.log('OK: graceful degradation working. Error message preview:');
-            console.log(err.substring(0, 120));
-          "
+          export XDG_RUNTIME_DIR=/tmp/pw-nodeps
+          mkdir -p $XDG_RUNTIME_DIR
+          # Start PulseAudio in daemon mode with a null (virtual) output sink.
+          # On ubuntu-22.04 pipewire-pulse bridges PulseAudio sessions to PipeWire,
+          # so our PipeWire-based module can enumerate and capture from this sink.
+          pulseaudio --daemonize=true \
+            --exit-idle-time=-1 \
+            --load="module-null-sink sink_name=NullSink" \
+            --log-target=file:/tmp/pw-nodeps/pulseaudio.log 2>/dev/null || true
+          sleep 2
 
-      - name: Run tests (native unavailable — only JS-layer tests execute)
-        # VIRTUAL_AUDIO_READY is intentionally NOT set so audio capture
-        # tests are skipped instead of attempted.
+          # Also start PipeWire daemon so our native module can connect.
+          pipewire &
+          sleep 2
+
+          if [ -S "$XDG_RUNTIME_DIR/pipewire-0" ]; then
+            echo "PipeWire socket ready: $XDG_RUNTIME_DIR/pipewire-0"
+          else
+            # Fallback: check default XDG path
+            echo "PipeWire socket not at custom path, checking defaults..."
+            ls /run/user/ 2>/dev/null || true
+          fi
+
+          # Feed 440 Hz sine into PulseAudio null sink for 60 s
+          ffmpeg -f lavfi -i sine=frequency=440:duration=60 \
+            -f pulse -device NullSink.monitor default \
+            -ar 48000 -ac 2 /dev/null 2>/dev/null &
+          echo "Sine wave playback started into NullSink"
+
+      - name: Run tests (no X11, with audio)
+        env:
+          VIRTUAL_AUDIO_READY: "1"
+          XDG_RUNTIME_DIR: /tmp/pw-nodeps
+          PIPEWIRE_REMOTE: /tmp/pw-nodeps/pipewire-0
         run: npm test

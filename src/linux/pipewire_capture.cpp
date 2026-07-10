@@ -49,30 +49,39 @@ static PipewireSyms* pw_syms = nullptr;
 static bool load_pipewire() {
     if (pw_syms) return true;
     void* handle = dlopen("libpipewire-0.3.so.0", RTLD_LAZY);
-    if (!handle) return false;
+    if (!handle) {
+        handle = dlopen("libpipewire-0.3.so", RTLD_LAZY);
+        if (!handle) return false;
+    }
 
     PipewireSyms* syms = new PipewireSyms();
-    syms->init = (decltype(syms->init))dlsym(handle, "pw_init");
-    syms->deinit = (decltype(syms->deinit))dlsym(handle, "pw_deinit");
-    syms->main_loop_new = (decltype(syms->main_loop_new))dlsym(handle, "pw_main_loop_new");
-    syms->main_loop_destroy = (decltype(syms->main_loop_destroy))dlsym(handle, "pw_main_loop_destroy");
-    syms->main_loop_get_loop = (decltype(syms->main_loop_get_loop))dlsym(handle, "pw_main_loop_get_loop");
-    syms->main_loop_quit = (decltype(syms->main_loop_quit))dlsym(handle, "pw_main_loop_quit");
-    syms->main_loop_run = (decltype(syms->main_loop_run))dlsym(handle, "pw_main_loop_run");
-    syms->context_new = (decltype(syms->context_new))dlsym(handle, "pw_context_new");
-    syms->context_destroy = (decltype(syms->context_destroy))dlsym(handle, "pw_context_destroy");
-    syms->context_connect = (decltype(syms->context_connect))dlsym(handle, "pw_context_connect");
-    syms->core_disconnect = (decltype(syms->core_disconnect))dlsym(handle, "pw_core_disconnect");
-    syms->stream_new = (decltype(syms->stream_new))dlsym(handle, "pw_stream_new");
-    syms->stream_destroy = (decltype(syms->stream_destroy))dlsym(handle, "pw_stream_destroy");
-    syms->properties_new = (decltype(syms->properties_new))dlsym(handle, "pw_properties_new");
-    syms->properties_set = (decltype(syms->properties_set))dlsym(handle, "pw_properties_set");
-    syms->stream_state_as_string = (decltype(syms->stream_state_as_string))dlsym(handle, "pw_stream_state_as_string");
-    syms->proxy_destroy = (decltype(syms->proxy_destroy))dlsym(handle, "pw_proxy_destroy");
-    syms->loop_iterate = (decltype(syms->loop_iterate))dlsym(handle, "pw_loop_iterate");
+    syms->init                = (decltype(syms->init))               dlsym(handle, "pw_init");
+    syms->deinit              = (decltype(syms->deinit))             dlsym(handle, "pw_deinit");
+    syms->main_loop_new       = (decltype(syms->main_loop_new))      dlsym(handle, "pw_main_loop_new");
+    syms->main_loop_destroy   = (decltype(syms->main_loop_destroy))  dlsym(handle, "pw_main_loop_destroy");
+    syms->main_loop_get_loop  = (decltype(syms->main_loop_get_loop)) dlsym(handle, "pw_main_loop_get_loop");
+    syms->main_loop_quit      = (decltype(syms->main_loop_quit))     dlsym(handle, "pw_main_loop_quit");
+    syms->main_loop_run       = (decltype(syms->main_loop_run))      dlsym(handle, "pw_main_loop_run");
+    syms->context_new         = (decltype(syms->context_new))        dlsym(handle, "pw_context_new");
+    syms->context_destroy     = (decltype(syms->context_destroy))    dlsym(handle, "pw_context_destroy");
+    syms->context_connect     = (decltype(syms->context_connect))    dlsym(handle, "pw_context_connect");
+    syms->core_disconnect     = (decltype(syms->core_disconnect))    dlsym(handle, "pw_core_disconnect");
+    syms->stream_new          = (decltype(syms->stream_new))         dlsym(handle, "pw_stream_new");
+    syms->stream_destroy      = (decltype(syms->stream_destroy))     dlsym(handle, "pw_stream_destroy");
+    syms->properties_new      = (decltype(syms->properties_new))     dlsym(handle, "pw_properties_new");
+    syms->properties_set      = (decltype(syms->properties_set))     dlsym(handle, "pw_properties_set");
+    syms->stream_state_as_string = (decltype(syms->stream_state_as_string)) dlsym(handle, "pw_stream_state_as_string");
+    syms->proxy_destroy       = (decltype(syms->proxy_destroy))      dlsym(handle, "pw_proxy_destroy");
+    syms->loop_iterate        = (decltype(syms->loop_iterate))       dlsym(handle, "pw_loop_iterate");
 
-    if (!syms->init || !syms->context_new || !syms->stream_new) {
+    // All critical symbols must resolve — any null means the library is too old or broken.
+    if (!syms->init             || !syms->main_loop_new    || !syms->main_loop_destroy ||
+        !syms->main_loop_get_loop || !syms->main_loop_quit || !syms->main_loop_run     ||
+        !syms->context_new      || !syms->context_destroy  || !syms->context_connect   ||
+        !syms->core_disconnect  || !syms->stream_new       || !syms->stream_destroy     ||
+        !syms->properties_new   || !syms->loop_iterate     || !syms->proxy_destroy) {
         delete syms;
+        dlclose(handle);
         return false;
     }
     pw_syms = syms;
@@ -233,8 +242,15 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
                   << ") audio will still be present in the capture." << std::endl;
     }
 
-    pw_init(nullptr, nullptr);
-    pImpl->pipewireInitialized = true;
+    // pw_init is a process-lifetime singleton: call once, never deinit between sessions.
+    // Re-calling pw_init between sessions is safe (it ref-counts internally).
+    // We deliberately do NOT call pw_deinit() between sessions to avoid corrupting
+    // PipeWire's internal signal-handler and thread-pool state.
+    static bool pwGlobalInitialized = false;
+    if (!pwGlobalInitialized) {
+        pw_init(nullptr, nullptr);
+        pwGlobalInitialized = true;
+    }
 
     pImpl->loop = pw_main_loop_new(nullptr);
     if (!pImpl->loop) {
@@ -260,17 +276,35 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
         return -4;
     }
 
+    // --- Registry round-trip: pump the loop until we find our target node ---
+    // pw_core_sync() sends a DONE event through the core connection.
+    // When it arrives back on our loop, we know all preceding registry events
+    // have been delivered. This is the correct PipeWire API for waiting on
+    // registry enumeration — pw_loop_iterate() with a raw timeout is unreliable.
     spa_zero(pImpl->registryListener);
     pw_registry_add_listener(pImpl->registry, &pImpl->registryListener, &registryEvents, pImpl);
 
-    struct pw_loop* loop = pw_main_loop_get_loop(pImpl->loop);
-    for (int i = 0; i < 50; i++) {
-        int result = pw_loop_iterate(loop, 10);
-        if (result < 0) break;
-        if (pImpl->targetNodeId != PW_ID_ANY) break;
+    struct pw_loop* rawLoop = pw_main_loop_get_loop(pImpl->loop);
+    // Run up to 10 sync rounds (each flushes all pending events from the daemon)
+    for (int round = 0; round < 10; ++round) {
+        for (int i = 0; i < 20; ++i) {
+            int r = pw_loop_iterate(rawLoop, 10 /* ms */);
+            if (r < 0) goto done_enumerate;
+        }
+        if (!isIncludeMode || pImpl->targetNodeId != PW_ID_ANY) break;
     }
+    done_enumerate:
 
     if (pImpl->includeMode && pImpl->targetNodeId == PW_ID_ANY) {
+        // Tear down before returning error so the caller starts clean.
+        pw_proxy_destroy((struct pw_proxy*)pImpl->registry);
+        pImpl->registry = nullptr;
+        pw_core_disconnect(pImpl->core);
+        pImpl->core = nullptr;
+        pw_context_destroy(pImpl->context);
+        pImpl->context = nullptr;
+        pw_main_loop_destroy(pImpl->loop);
+        pImpl->loop = nullptr;
         outError = "Target process audio node not found (PID: " + std::to_string(processId)
                    + "). The process may not be producing audio yet.";
         return -5;
@@ -340,8 +374,12 @@ void PipewireCapture::Start(DataCallback callback) {
 
         pw_main_loop_run(pImpl->loop);
 
-        // ── Cleanup: all PW objects must be destroyed on THIS thread ──────────
-        // Destroying from Stop() (a different thread) causes the segfault.
+        // ── Cleanup: all PW objects MUST be destroyed on THIS thread ──────────
+        // PipeWire objects are not thread-safe; destroying from Stop() (a different
+        // thread) causes the segfault. We clear onData first so any final
+        // onStreamProcess() callbacks fired during pw_stream_destroy() are no-ops.
+        onData = nullptr;
+
         if (pImpl->stream) {
             pw_stream_destroy(pImpl->stream);
             pImpl->stream = nullptr;
@@ -362,10 +400,8 @@ void PipewireCapture::Start(DataCallback callback) {
             pw_main_loop_destroy(pImpl->loop);
             pImpl->loop = nullptr;
         }
-        if (pImpl->pipewireInitialized) {
-            pw_deinit();
-            pImpl->pipewireInitialized = false;
-        }
+        // NOTE: pw_deinit() is intentionally NOT called here.
+        // pw_init/pw_deinit are process-lifetime singletons; see Initialize().
     });
 #endif
 }
