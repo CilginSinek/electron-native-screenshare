@@ -81,12 +81,10 @@ jobs:
             # VBScript/wscript starts instantly compared to PowerShell Start-Job.
             # This ensures audio is actively rendering throughout the npm test step.
             $vbs = "$env:TEMP\play.vbs"
-            @"
-Set Sound = CreateObject("WMPlayer.OCX.7")
-Sound.URL = "$wav"
-Sound.Controls.play
-WScript.Sleep 120000
-"@ | Out-File -FilePath $vbs -Encoding ASCII
+            Add-Content -Path $vbs -Value "Set Sound = CreateObject(`"WMPlayer.OCX.7`")"
+            Add-Content -Path $vbs -Value "Sound.URL = `"$wav`""
+            Add-Content -Path $vbs -Value "Sound.Controls.play"
+            Add-Content -Path $vbs -Value "WScript.Sleep 120000"
             
             Start-Process -FilePath "wscript.exe" -ArgumentList "`"$vbs`"" -WindowStyle Hidden
             Write-Host "Sine wave playback started via VBScript background process"
