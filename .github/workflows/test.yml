@@ -77,16 +77,19 @@ jobs:
           Start-Process -FilePath $ffmpeg -ArgumentList "-f lavfi -i sine=frequency=440:duration=120 -ar 48000 -ac 2 `"$wav`" -y" -Wait -NoNewWindow
           
           if (Test-Path $wav) {
-            # Start a background PowerShell job to keep the COM object alive for 120s.
-            # This ensures audio continues playing during the npm test step.
-            Start-Job -ScriptBlock {
-              Add-Type -AssemblyName presentationCore
-              $player = New-Object System.Windows.Media.MediaPlayer
-              $player.Open([Uri]::new($args[0]))
-              $player.Play()
-              Start-Sleep -Seconds 120
-            } -ArgumentList $wav | Out-Null
-            Write-Host "Sine wave playback started via background PowerShell job"
+            # Start a background VBScript to keep WMPlayer playing for 120s.
+            # VBScript/wscript starts instantly compared to PowerShell Start-Job.
+            # This ensures audio is actively rendering throughout the npm test step.
+            $vbs = "$env:TEMP\play.vbs"
+            @"
+Set Sound = CreateObject("WMPlayer.OCX.7")
+Sound.URL = "$wav"
+Sound.Controls.play
+WScript.Sleep 120000
+"@ | Out-File -FilePath $vbs -Encoding ASCII
+            
+            Start-Process -FilePath "wscript.exe" -ArgumentList "`"$vbs`"" -WindowStyle Hidden
+            Write-Host "Sine wave playback started via VBScript background process"
           } else {
             Write-Warning "ffmpeg WAV generation failed -- audio capture tests may time out"
           }
