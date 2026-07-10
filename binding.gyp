@@ -1,7 +1,7 @@
 {
   "targets": [
     {
-      "target_name": "topluyo_capture",
+      "target_name": "electron_native_screenshare",
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")"
       ],
@@ -59,6 +59,10 @@
           "defines": [
             "<!@(pkg-config --exists libpipewire-0.3 && echo 'HAVE_PIPEWIRE' || echo 'DISABLE_PIPEWIRE')",
             "<!@(pkg-config --exists x11 && echo 'HAVE_X11' || echo 'DISABLE_X11')"
+          ],
+          "libraries": [
+            "<!@(pkg-config --libs libpipewire-0.3 2>/dev/null || echo '')",
+            "<!@(pkg-config --libs x11 2>/dev/null || echo '')"
           ]
         }]
       ]

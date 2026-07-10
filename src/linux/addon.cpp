@@ -108,4 +108,4 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     return exports;
 }
 
-NODE_API_MODULE(topluyo_capture, Init)
+NODE_API_MODULE(electron_native_screenshare, Init)
