@@ -12,9 +12,12 @@
 
 #include "pipewire_capture.h"
 #include <iostream>
+#include <cstring>
+#include <atomic>
 #include <thread>
 #include <mutex>
-#include <cstring>
+#include <vector>
+#include <map>
 
 #ifdef HAVE_PIPEWIRE
 
@@ -38,12 +41,15 @@ struct PipewireSyms {
     int (*core_disconnect)(struct pw_core*);
     struct pw_stream* (*stream_new)(struct pw_core*, const char*, struct pw_properties*);
     void (*stream_destroy)(struct pw_stream*);
+    uint32_t (*stream_get_node_id)(struct pw_stream*);
     void (*stream_add_listener)(struct pw_stream*, struct spa_hook*, const struct pw_stream_events*, void*);
     int (*stream_connect)(struct pw_stream*, enum pw_direction, uint32_t, enum pw_stream_flags, const struct spa_pod**, uint32_t);
     struct pw_properties* (*properties_new)(const char*, ...) __attribute__((sentinel));
     int (*properties_set)(struct pw_properties*, const char*, const char*);
     const char* (*stream_state_as_string)(enum pw_stream_state);
     void (*proxy_destroy)(struct pw_proxy*);
+    struct pw_proxy* (*proxy_new)(struct pw_proxy*, const char*, uint32_t, size_t);
+    uint32_t (*proxy_get_id)(struct pw_proxy*);
 };
 static PipewireSyms* pw_syms = nullptr;
 
@@ -73,16 +79,19 @@ static bool load_pipewire() {
     syms->properties_set      = (decltype(syms->properties_set))     dlsym(handle, "pw_properties_set");
     syms->stream_state_as_string = (decltype(syms->stream_state_as_string)) dlsym(handle, "pw_stream_state_as_string");
     syms->proxy_destroy       = (decltype(syms->proxy_destroy))      dlsym(handle, "pw_proxy_destroy");
+    syms->proxy_new           = (decltype(syms->proxy_new))          dlsym(handle, "pw_proxy_new");
+    syms->proxy_get_id        = (decltype(syms->proxy_get_id))       dlsym(handle, "pw_proxy_get_id");
+    syms->stream_get_node_id  = (decltype(syms->stream_get_node_id)) dlsym(handle, "pw_stream_get_node_id");
     syms->stream_add_listener = (decltype(syms->stream_add_listener))dlsym(handle, "pw_stream_add_listener");
     syms->stream_connect      = (decltype(syms->stream_connect))     dlsym(handle, "pw_stream_connect");
 
     // All critical symbols must resolve — any null means the library is too old or broken.
     if (!syms->init             || !syms->main_loop_new    || !syms->main_loop_destroy ||
-        !syms->main_loop_get_loop || !syms->main_loop_quit || !syms->main_loop_run     ||
-        !syms->context_new      || !syms->context_destroy  || !syms->context_connect   ||
-        !syms->core_disconnect  || !syms->stream_new       || !syms->stream_destroy     ||
-        !syms->stream_add_listener || !syms->stream_connect ||
-        !syms->properties_new   || !syms->proxy_destroy) {
+        !syms->main_loop_get_loop || !syms->context_new      || !syms->context_destroy ||
+        !syms->context_connect  || !syms->core_disconnect  || !syms->stream_new       ||
+        !syms->stream_destroy   || !syms->stream_get_node_id || !syms->stream_add_listener ||
+        !syms->stream_connect   || !syms->properties_new   || !syms->proxy_destroy    ||
+        !syms->proxy_new        || !syms->proxy_get_id) {
         delete syms;
         dlclose(handle);
         return false;
@@ -104,12 +113,26 @@ static bool load_pipewire() {
 #define pw_core_disconnect pw_syms->core_disconnect
 #define pw_stream_new pw_syms->stream_new
 #define pw_stream_destroy pw_syms->stream_destroy
+#define pw_stream_get_node_id pw_syms->stream_get_node_id
 #define pw_stream_add_listener pw_syms->stream_add_listener
 #define pw_stream_connect pw_syms->stream_connect
 #define pw_properties_new pw_syms->properties_new
 #define pw_properties_set pw_syms->properties_set
 #define pw_stream_state_as_string pw_syms->stream_state_as_string
 #define pw_proxy_destroy pw_syms->proxy_destroy
+#define pw_proxy_new pw_syms->proxy_new
+#define pw_proxy_get_id pw_syms->proxy_get_id
+
+struct PortInfo {
+    uint32_t id;
+    std::string channel;
+};
+
+struct AppNode {
+    uint32_t id;
+    uint32_t pid;
+    std::vector<PortInfo> outPorts;
+};
 
 // --- Pimpl internals ---
 struct PipewireCapture::Impl {
@@ -124,6 +147,12 @@ struct PipewireCapture::Impl {
     uint32_t targetPid = 0;
     bool includeMode = false;
     uint32_t targetNodeId = PW_ID_ANY;
+
+    // State for Dynamic Graph Link Engine (Exclude Mode)
+    std::map<uint32_t, AppNode> appNodes;
+    uint32_t myNodeId = PW_ID_ANY;
+    std::vector<PortInfo> myInPorts;
+    std::map<uint64_t, struct pw_proxy*> activeLinksMap;
 
     std::thread captureThread;
     std::mutex mutex;
@@ -158,10 +187,55 @@ static void onStreamProcess(void* userdata) {
 }
 
 static void onStreamStateChanged(void* userdata, enum pw_stream_state old,
+// --- Dynamic Graph Link Engine ---
+static void tryCreateLinks(PipewireCapture::Impl* impl) {
+    if (impl->myNodeId == PW_ID_ANY || impl->myInPorts.empty()) return;
+
+    for (auto& pair : impl->appNodes) {
+        AppNode& app = pair.second;
+        for (const auto& outPort : app.outPorts) {
+            for (const auto& inPort : impl->myInPorts) {
+                bool match = (outPort.channel == inPort.channel) || 
+                             (outPort.channel == "MONO") || (inPort.channel == "MONO") ||
+                             (outPort.channel == "UNK") || (inPort.channel == "UNK");
+                if (match) {
+                    uint64_t linkKey = ((uint64_t)outPort.id << 32) | inPort.id;
+                    if (impl->activeLinksMap.find(linkKey) == impl->activeLinksMap.end()) {
+                        struct pw_properties* p = pw_properties_new(nullptr, nullptr);
+                        pw_properties_setf(p, PW_KEY_LINK_OUTPUT_NODE, "%u", app.id);
+                        pw_properties_setf(p, PW_KEY_LINK_OUTPUT_PORT, "%u", outPort.id);
+                        pw_properties_setf(p, PW_KEY_LINK_INPUT_NODE, "%u", impl->myNodeId);
+                        pw_properties_setf(p, PW_KEY_LINK_INPUT_PORT, "%u", inPort.id);
+                        
+                        struct pw_proxy* link = pw_proxy_new((struct pw_proxy*)impl->core, PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, 0);
+                        if (link) {
+                            pw_core_method_create_object(impl->core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &p->dict, pw_proxy_get_id(link));
+                            impl->activeLinksMap[linkKey] = link;
+                        }
+                        pw_properties_free(p);
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void onStreamStateChanged(void* userdata, enum pw_stream_state old,
                                   enum pw_stream_state state, const char* error) {
+    PipewireCapture* self = static_cast<PipewireCapture*>(userdata);
     if (error) {
         std::cerr << "[electron-native-screenshare] PipeWire stream state: "
                   << pw_stream_state_as_string(state) << " — " << error << std::endl;
+    }
+    
+    if (state == PW_STREAM_STATE_PAUSED || state == PW_STREAM_STATE_STREAMING) {
+        if (!self->pImpl->includeMode) {
+            std::lock_guard<std::mutex> lock(self->pImpl->mutex);
+            if (self->pImpl->myNodeId == PW_ID_ANY) {
+                self->pImpl->myNodeId = pw_stream_get_node_id(self->pImpl->stream);
+                tryCreateLinks(self->pImpl);
+            }
+        }
     }
 }
 
@@ -173,32 +247,73 @@ static const struct pw_stream_events streamEvents = []() {
     return ev;
 }();
 
-// --- Registry listener to find target node by PID ---
+// --- Registry listener for dynamic graph routing ---
 static void onRegistryGlobal(void* userdata, uint32_t id, uint32_t permissions,
                               const char* type, uint32_t version,
                               const struct spa_dict* props) {
     PipewireCapture::Impl* impl = static_cast<PipewireCapture::Impl*>(userdata);
-
-    if (!props || strcmp(type, PW_TYPE_INTERFACE_Node) != 0) return;
-
-    const char* mediaClass = spa_dict_lookup(props, PW_KEY_MEDIA_CLASS);
-    if (!mediaClass) return;
+    if (!props) return;
 
     if (impl->includeMode) {
-        if (strcmp(mediaClass, "Stream/Output/Audio") != 0) return;
-        const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
-        if (!pidStr) return;
-
-        uint32_t nodePid = (uint32_t)atoi(pidStr);
-        if (nodePid == impl->targetPid) {
-            impl->targetNodeId = id;
-        }
-    } else {
-        if (strcmp(mediaClass, "Audio/Sink") == 0) {
-            if (impl->targetNodeId == PW_ID_ANY) {
+        // Legacy Include Mode (Single Node targeting)
+        if (strcmp(type, PW_TYPE_INTERFACE_Node) != 0) return;
+        const char* mediaClass = spa_dict_lookup(props, PW_KEY_MEDIA_CLASS);
+        if (mediaClass && strcmp(mediaClass, "Stream/Output/Audio") == 0) {
+            const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
+            if (pidStr && (uint32_t)atoi(pidStr) == impl->targetPid) {
                 impl->targetNodeId = id;
             }
         }
+        return;
+    }
+
+    // Exclude Mode: Dynamic graph linking
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    if (strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
+        const char* mediaClass = spa_dict_lookup(props, PW_KEY_MEDIA_CLASS);
+        if (mediaClass && strcmp(mediaClass, "Stream/Output/Audio") == 0) {
+            const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
+            uint32_t pid = pidStr ? (uint32_t)atoi(pidStr) : 0;
+            
+            // Exclude the target PID!
+            if (pid != 0 && pid == impl->targetPid) return;
+
+            AppNode node;
+            node.id = id;
+            node.pid = pid;
+            impl->appNodes[id] = node;
+        }
+    } else if (strcmp(type, PW_TYPE_INTERFACE_Port) == 0) {
+        const char* nodeIdStr = spa_dict_lookup(props, PW_KEY_NODE_ID);
+        const char* direction = spa_dict_lookup(props, PW_KEY_PORT_DIRECTION);
+        const char* channel = spa_dict_lookup(props, PW_KEY_AUDIO_CHANNEL);
+        
+        if (!nodeIdStr || !direction) return;
+        uint32_t nodeId = (uint32_t)atoi(nodeIdStr);
+
+        PortInfo pi;
+        pi.id = id;
+        pi.channel = channel ? channel : "UNK";
+
+        if (nodeId == impl->myNodeId && strcmp(direction, "in") == 0) {
+            impl->myInPorts.push_back(pi);
+            tryCreateLinks(impl);
+        } else if (strcmp(direction, "out") == 0) {
+            auto it = impl->appNodes.find(nodeId);
+            if (it != impl->appNodes.end()) {
+                it->second.outPorts.push_back(pi);
+                tryCreateLinks(impl);
+            }
+        }
+    }
+}
+
+static void onRegistryGlobalRemove(void* userdata, uint32_t id) {
+    PipewireCapture::Impl* impl = static_cast<PipewireCapture::Impl*>(userdata);
+    if (!impl->includeMode) {
+        std::lock_guard<std::mutex> lock(impl->mutex);
+        impl->appNodes.erase(id);
+        // Let PipeWire auto-destroy the links on the server side when nodes/ports vanish.
     }
 }
 
@@ -206,6 +321,7 @@ static const struct pw_registry_events registryEvents = []() {
     struct pw_registry_events ev = {};
     ev.version = PW_VERSION_REGISTRY_EVENTS;
     ev.global = onRegistryGlobal;
+    ev.global_remove = onRegistryGlobalRemove;
     return ev;
 }();
 
@@ -238,13 +354,6 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
 
     pImpl->targetPid = processId;
     pImpl->includeMode = isIncludeMode;
-
-    if (!isIncludeMode) {
-        std::cerr << "[electron-native-screenshare] WARNING: On Linux, exclude mode captures all "
-                  << "system audio from the default output. Per-process audio exclusion is not "
-                  << "supported natively by PipeWire. The target process (PID: " << processId
-                  << ") audio will still be present in the capture." << std::endl;
-    }
 
     // pw_init is a process-lifetime singleton: call once, never deinit between sessions.
     // Re-calling pw_init between sessions is safe (it ref-counts internally).
@@ -352,12 +461,10 @@ void PipewireCapture::Start(DataCallback callback) {
             snprintf(nodeIdStr, sizeof(nodeIdStr), "%u", pImpl->targetNodeId);
             pw_properties_set(props, PW_KEY_TARGET_OBJECT, nodeIdStr);
         } else if (!pImpl->includeMode) {
-            if (pImpl->targetNodeId != PW_ID_ANY) {
-                char nodeIdStr[32];
-                snprintf(nodeIdStr, sizeof(nodeIdStr), "%u", pImpl->targetNodeId);
-                pw_properties_set(props, PW_KEY_TARGET_OBJECT, nodeIdStr);
-            }
-            pw_properties_set(props, PW_KEY_STREAM_CAPTURE_SINK, "true");
+            // Exclude Mode: We do NOT use target_object or capture_sink.
+            // We also explicitly disable autoconnect so the session manager
+            // doesn't route us to the default sink.
+            pw_properties_set(props, PW_KEY_NODE_AUTOCONNECT, "false");
         }
 
         pImpl->stream = pw_stream_new(pImpl->core, "electron-screenshare-capture", props);
@@ -370,11 +477,16 @@ void PipewireCapture::Start(DataCallback callback) {
         spa_zero(pImpl->streamListener);
         pw_stream_add_listener(pImpl->stream, &pImpl->streamListener, &streamEvents, this);
 
+        enum pw_stream_flags flags = PW_STREAM_FLAG_MAP_BUFFERS;
+        if (pImpl->includeMode) {
+            flags = (enum pw_stream_flags)(flags | PW_STREAM_FLAG_AUTOCONNECT);
+        }
+
         pw_stream_connect(
             pImpl->stream,
             PW_DIRECTION_INPUT,
             PW_ID_ANY,
-            (enum pw_stream_flags)(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS),
+            flags,
             params, 1
         );
 
@@ -388,6 +500,19 @@ void PipewireCapture::Start(DataCallback callback) {
         // thread) causes the segfault. We clear onData first so any final
         // onStreamProcess() callbacks fired during pw_stream_destroy() are no-ops.
         onData = nullptr;
+
+        if (!pImpl->includeMode) {
+            std::lock_guard<std::mutex> lock(pImpl->mutex);
+            // Links are actually owned by the proxy. Destroying the stream/core
+            // cleans them up, but freeing the proxy objects prevents leaks.
+            for (auto& pair : pImpl->activeLinksMap) {
+                if (pair.second) pw_proxy_destroy(pair.second);
+            }
+            pImpl->activeLinksMap.clear();
+            pImpl->appNodes.clear();
+            pImpl->myInPorts.clear();
+            pImpl->myNodeId = PW_ID_ANY;
+        }
 
         if (pImpl->stream) {
             pw_stream_destroy(pImpl->stream);

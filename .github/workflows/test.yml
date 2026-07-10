@@ -205,9 +205,9 @@ jobs:
 
           # Feed a 440 Hz sine wave to PipeWire's default sink for 60 s
           # (covers the full Jest run including timeouts)
-          PIPEWIRE_REMOTE=$XDG_RUNTIME_DIR/pipewire-0 \
-            ffmpeg -f lavfi -i sine=frequency=440:duration=60 \
-              -f au - | pw-play - &
+          export PIPEWIRE_REMOTE=$XDG_RUNTIME_DIR/pipewire-0
+          ffmpeg -f lavfi -i sine=frequency=440:duration=60 \
+            -f au - | pw-play - &
           echo "Sine wave playback started"
 
       - name: Run tests
@@ -284,6 +284,7 @@ jobs:
           fi
 
           # Feed 440 Hz sine into PulseAudio null sink for 60 s
+          export PULSE_RUNTIME_PATH=/tmp/pw-nodeps/pulse
           ffmpeg -f lavfi -i sine=frequency=440:duration=60 \
             -f pulse "NullSink" 2>/dev/null &
           echo "Sine wave playback started into NullSink"
