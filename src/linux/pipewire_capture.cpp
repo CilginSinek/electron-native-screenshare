@@ -166,8 +166,9 @@ struct PipewireCapture::Impl {
 
     // State for Dynamic Graph Link Engine (Exclude Mode)
     std::map<uint32_t, AppNode> appNodes;
-    uint32_t myNodeId = PW_ID_ANY;
     std::vector<PortInfo> myInPorts;
+    std::map<uint32_t, std::vector<PortInfo>> allInPorts;
+    std::map<uint32_t, std::vector<PortInfo>> allOutPorts;
     std::map<uint64_t, struct pw_proxy*> activeLinksMap;
 
     std::thread captureThread;
@@ -255,6 +256,10 @@ static void onStreamStateChanged(void* userdata, enum pw_stream_state old,
             if (self->pImpl->myNodeId == PW_ID_ANY) {
                 self->pImpl->myNodeId = pw_stream_get_node_id(self->pImpl->stream);
                 std::cout << "[DEBUG] Stream Node ID resolved: " << self->pImpl->myNodeId << std::endl;
+                if (self->pImpl->allInPorts.count(self->pImpl->myNodeId)) {
+                    self->pImpl->myInPorts = self->pImpl->allInPorts[self->pImpl->myNodeId];
+                    std::cout << "[DEBUG] Grabbed " << self->pImpl->myInPorts.size() << " input ports retroactively." << std::endl;
+                }
                 tryCreateLinks(self->pImpl);
             }
         }
@@ -303,8 +308,13 @@ static void onRegistryGlobal(void* userdata, uint32_t id, uint32_t permissions,
             AppNode node;
             node.id = id;
             node.pid = pid;
+            if (impl->allOutPorts.count(id)) {
+                node.outPorts = impl->allOutPorts[id];
+                std::cout << "[DEBUG] Grabbed " << node.outPorts.size() << " output ports retroactively." << std::endl;
+            }
             impl->appNodes[id] = node;
             std::cout << "[DEBUG] Discovered App Node: " << id << " PID: " << pid << std::endl;
+            tryCreateLinks(impl);
         }
     } else if (strcmp(type, PW_TYPE_INTERFACE_Port) == 0) {
         const char* nodeIdStr = spa_dict_lookup(props, PW_KEY_NODE_ID);
@@ -318,11 +328,15 @@ static void onRegistryGlobal(void* userdata, uint32_t id, uint32_t permissions,
         pi.id = id;
         pi.channel = channel ? channel : "UNK";
 
-        if (nodeId == impl->myNodeId && strcmp(direction, "in") == 0) {
-            std::cout << "[DEBUG] Discovered our Input Port: " << id << " Channel: " << pi.channel << std::endl;
-            impl->myInPorts.push_back(pi);
-            tryCreateLinks(impl);
+        if (strcmp(direction, "in") == 0) {
+            impl->allInPorts[nodeId].push_back(pi);
+            if (nodeId == impl->myNodeId) {
+                std::cout << "[DEBUG] Discovered our Input Port: " << id << " Channel: " << pi.channel << std::endl;
+                impl->myInPorts.push_back(pi);
+                tryCreateLinks(impl);
+            }
         } else if (strcmp(direction, "out") == 0) {
+            impl->allOutPorts[nodeId].push_back(pi);
             auto it = impl->appNodes.find(nodeId);
             if (it != impl->appNodes.end()) {
                 std::cout << "[DEBUG] Discovered App Output Port: " << id << " for Node: " << nodeId << " Channel: " << pi.channel << std::endl;
