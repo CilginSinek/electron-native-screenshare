@@ -38,6 +38,8 @@ struct PipewireSyms {
     int (*core_disconnect)(struct pw_core*);
     struct pw_stream* (*stream_new)(struct pw_core*, const char*, struct pw_properties*);
     void (*stream_destroy)(struct pw_stream*);
+    void (*stream_add_listener)(struct pw_stream*, struct spa_hook*, const struct pw_stream_events*, void*);
+    int (*stream_connect)(struct pw_stream*, enum pw_direction, uint32_t, enum pw_stream_flags, const struct spa_pod**, uint32_t);
     struct pw_properties* (*properties_new)(const char*, ...) __attribute__((sentinel));
     int (*properties_set)(struct pw_properties*, const char*, const char*);
     const char* (*stream_state_as_string)(enum pw_stream_state);
@@ -71,12 +73,15 @@ static bool load_pipewire() {
     syms->properties_set      = (decltype(syms->properties_set))     dlsym(handle, "pw_properties_set");
     syms->stream_state_as_string = (decltype(syms->stream_state_as_string)) dlsym(handle, "pw_stream_state_as_string");
     syms->proxy_destroy       = (decltype(syms->proxy_destroy))      dlsym(handle, "pw_proxy_destroy");
+    syms->stream_add_listener = (decltype(syms->stream_add_listener))dlsym(handle, "pw_stream_add_listener");
+    syms->stream_connect      = (decltype(syms->stream_connect))     dlsym(handle, "pw_stream_connect");
 
     // All critical symbols must resolve — any null means the library is too old or broken.
     if (!syms->init             || !syms->main_loop_new    || !syms->main_loop_destroy ||
         !syms->main_loop_get_loop || !syms->main_loop_quit || !syms->main_loop_run     ||
         !syms->context_new      || !syms->context_destroy  || !syms->context_connect   ||
         !syms->core_disconnect  || !syms->stream_new       || !syms->stream_destroy     ||
+        !syms->stream_add_listener || !syms->stream_connect ||
         !syms->properties_new   || !syms->proxy_destroy) {
         delete syms;
         dlclose(handle);
@@ -99,6 +104,8 @@ static bool load_pipewire() {
 #define pw_core_disconnect pw_syms->core_disconnect
 #define pw_stream_new pw_syms->stream_new
 #define pw_stream_destroy pw_syms->stream_destroy
+#define pw_stream_add_listener pw_syms->stream_add_listener
+#define pw_stream_connect pw_syms->stream_connect
 #define pw_properties_new pw_syms->properties_new
 #define pw_properties_set pw_syms->properties_set
 #define pw_stream_state_as_string pw_syms->stream_state_as_string
