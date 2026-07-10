@@ -565,6 +565,8 @@ void PipewireCapture::Start(DataCallback callback) {
             pImpl->activeLinksMap.clear();
             pImpl->appNodes.clear();
             pImpl->myInPorts.clear();
+            pImpl->allInPorts.clear();
+            pImpl->allOutPorts.clear();
             pImpl->myNodeId = PW_ID_ANY;
         }
 
