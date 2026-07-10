@@ -44,6 +44,14 @@ jobs:
         shell: powershell
         run: |
           choco install vb-cable -y --no-progress
+          
+          # GitHub Actions Windows runners have the Audio service disabled by default.
+          # We must explicitly enable and start it so WASAPI can initialize.
+          Set-Service -Name "AudioEndpointBuilder" -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service -Name "AudioEndpointBuilder" -ErrorAction SilentlyContinue
+          Set-Service -Name "AudioSrv" -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service -Name "AudioSrv" -ErrorAction SilentlyContinue
+          
           # Give the audio service time to enumerate the new device
           Start-Sleep -Seconds 8
           $devices = Get-PnpDevice -Class "AudioEndpoint" -Status "OK" -ErrorAction SilentlyContinue |
