@@ -211,10 +211,17 @@ static void tryCreateLinks(PipewireCapture::Impl* impl) {
     for (auto& pair : impl->appNodes) {
         AppNode& app = pair.second;
         for (const auto& outPort : app.outPorts) {
-            for (const auto& inPort : impl->myInPorts) {
+            for (auto& inPort : impl->myInPorts) {
                 bool match = (outPort.channel == inPort.channel) || 
-                             (outPort.channel == "MONO") || (inPort.channel == "MONO") ||
-                             (outPort.channel == "UNK") || (inPort.channel == "UNK");
+                             (outPort.channel == "MONO") || (inPort.channel == "MONO");
+                
+                if (!match && inPort.channel == "UNK") {
+                    // Promote UNK port to match the app's output channel
+                    // This prevents linking both FL and FR to the same UNK port (which causes volume multiplication/clipping)
+                    inPort.channel = outPort.channel;
+                    match = true;
+                }
+
                 if (match) {
                     uint64_t linkKey = ((uint64_t)outPort.id << 32) | inPort.id;
                     if (impl->activeLinksMap.find(linkKey) == impl->activeLinksMap.end()) {
@@ -243,6 +250,8 @@ static void tryCreateLinks(PipewireCapture::Impl* impl) {
                             std::cout << "[DEBUG] PipeWire failed to create link!" << std::endl;
                         }
                     }
+                    // We found a match for this output port, move to the next output port
+                    break;
                 }
             }
         }
