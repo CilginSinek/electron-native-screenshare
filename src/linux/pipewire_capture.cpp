@@ -42,7 +42,6 @@ struct PipewireSyms {
     int (*properties_set)(struct pw_properties*, const char*, const char*);
     const char* (*stream_state_as_string)(enum pw_stream_state);
     void (*proxy_destroy)(struct pw_proxy*);
-    int (*loop_iterate)(struct pw_loop*, int);
 };
 static PipewireSyms* pw_syms = nullptr;
 
@@ -72,14 +71,13 @@ static bool load_pipewire() {
     syms->properties_set      = (decltype(syms->properties_set))     dlsym(handle, "pw_properties_set");
     syms->stream_state_as_string = (decltype(syms->stream_state_as_string)) dlsym(handle, "pw_stream_state_as_string");
     syms->proxy_destroy       = (decltype(syms->proxy_destroy))      dlsym(handle, "pw_proxy_destroy");
-    syms->loop_iterate        = (decltype(syms->loop_iterate))       dlsym(handle, "pw_loop_iterate");
 
     // All critical symbols must resolve — any null means the library is too old or broken.
     if (!syms->init             || !syms->main_loop_new    || !syms->main_loop_destroy ||
         !syms->main_loop_get_loop || !syms->main_loop_quit || !syms->main_loop_run     ||
         !syms->context_new      || !syms->context_destroy  || !syms->context_connect   ||
         !syms->core_disconnect  || !syms->stream_new       || !syms->stream_destroy     ||
-        !syms->properties_new   || !syms->proxy_destroy    || !syms->loop_iterate) {
+        !syms->properties_new   || !syms->proxy_destroy) {
         delete syms;
         dlclose(handle);
         return false;
@@ -105,7 +103,6 @@ static bool load_pipewire() {
 #define pw_properties_set pw_syms->properties_set
 #define pw_stream_state_as_string pw_syms->stream_state_as_string
 #define pw_proxy_destroy pw_syms->proxy_destroy
-#define pw_loop_iterate pw_syms->loop_iterate
 
 // --- Pimpl internals ---
 struct PipewireCapture::Impl {
