@@ -91,7 +91,8 @@ jobs:
           } else {
             Write-Warning "ffmpeg WAV generation failed -- audio capture tests may time out"
           }
-          Start-Sleep -Seconds 2
+          # Give WMPlayer.OCX plenty of time to load and start rendering audio on slow CI runners
+          Start-Sleep -Seconds 10
 
       - name: Run tests
         shell: powershell
