@@ -20,9 +20,18 @@
 #include <map>
 
 #ifdef HAVE_PIPEWIRE
+#include <dlfcn.h>
 
+struct pw_proxy;
+extern "C" struct pw_proxy* my_pw_proxy_new(struct pw_proxy *factory, const char *type, uint32_t version, size_t user_data_size);
+extern "C" uint32_t my_pw_proxy_get_id(struct pw_proxy *proxy);
+
+#define pw_proxy_new my_pw_proxy_new
+#define pw_proxy_get_id my_pw_proxy_get_id
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
+#undef pw_proxy_new
+#undef pw_proxy_get_id
 #include <spa/debug/types.h>
 #include <spa/param/audio/type-info.h>
 #include <dlfcn.h>
@@ -120,8 +129,15 @@ static bool load_pipewire() {
 #define pw_properties_set pw_syms->properties_set
 #define pw_stream_state_as_string pw_syms->stream_state_as_string
 #define pw_proxy_destroy pw_syms->proxy_destroy
-#define pw_proxy_new pw_syms->proxy_new
-#define pw_proxy_get_id pw_syms->proxy_get_id
+
+extern "C" struct pw_proxy* my_pw_proxy_new(struct pw_proxy *factory, const char *type, uint32_t version, size_t user_data_size) {
+    if (!pw_syms || !pw_syms->proxy_new) return nullptr;
+    return pw_syms->proxy_new(factory, type, version, user_data_size);
+}
+extern "C" uint32_t my_pw_proxy_get_id(struct pw_proxy *proxy) {
+    if (!pw_syms || !pw_syms->proxy_get_id) return 0;
+    return pw_syms->proxy_get_id(proxy);
+}
 
 struct PortInfo {
     uint32_t id;
@@ -186,7 +202,6 @@ static void onStreamProcess(void* userdata) {
     pw_stream_queue_buffer(self->pImpl->stream, b);
 }
 
-static void onStreamStateChanged(void* userdata, enum pw_stream_state old,
 // --- Dynamic Graph Link Engine ---
 static void tryCreateLinks(PipewireCapture::Impl* impl) {
     if (impl->myNodeId == PW_ID_ANY || impl->myInPorts.empty()) return;
@@ -207,9 +222,9 @@ static void tryCreateLinks(PipewireCapture::Impl* impl) {
                         pw_properties_setf(p, PW_KEY_LINK_INPUT_NODE, "%u", impl->myNodeId);
                         pw_properties_setf(p, PW_KEY_LINK_INPUT_PORT, "%u", inPort.id);
                         
-                        struct pw_proxy* link = pw_proxy_new((struct pw_proxy*)impl->core, PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, 0);
+                        struct pw_proxy* link = (struct pw_proxy*)pw_core_create_object(
+                            impl->core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &p->dict, 0);
                         if (link) {
-                            pw_core_method_create_object(impl->core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &p->dict, pw_proxy_get_id(link));
                             impl->activeLinksMap[linkKey] = link;
                         }
                         pw_properties_free(p);
