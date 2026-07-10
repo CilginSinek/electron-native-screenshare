@@ -187,8 +187,10 @@ jobs:
           mkdir -p $XDG_RUNTIME_DIR
 
           # Launch PipeWire daemon (headless — no physical hardware needed)
-          pipewire &
-          wireplumber &
+          dbus-daemon --session --nofork --print-address &
+          sleep 1
+          pipewire > /tmp/pw.log 2>&1 &
+          wireplumber > /tmp/wp.log 2>&1 &
           sleep 2
 
           # Verify the socket exists before proceeding
@@ -217,7 +219,8 @@ jobs:
           VIRTUAL_AUDIO_READY: "1"
           XDG_RUNTIME_DIR: /tmp/pipewire-runtime
           PIPEWIRE_REMOTE: /tmp/pipewire-runtime/pipewire-0
-        run: xvfb-run -a npm test
+        run: |
+          xvfb-run -a npm test || { echo "--- PIPEWIRE LOG ---"; cat /tmp/pw.log; echo "--- WIREPLUMBER LOG ---"; cat /tmp/wp.log; exit 1; }
 
   # ───────────────────────────────────────────────────────────────────────────
   # LINUX NO-X11 — Tests with PulseAudio null sink, no X11 dependency.
@@ -275,9 +278,11 @@ jobs:
           sleep 2
 
           # Also start PipeWire daemon and WirePlumber so our native module can connect.
-          pipewire &
+          dbus-daemon --session --nofork --print-address &
           sleep 1
-          wireplumber &
+          pipewire > /tmp/pw.log 2>&1 &
+          sleep 1
+          wireplumber > /tmp/wp.log 2>&1 &
           sleep 2
 
           if [ -S "$XDG_RUNTIME_DIR/pipewire-0" ]; then
@@ -294,9 +299,10 @@ jobs:
             -f pulse "NullSink" 2>/dev/null &
           echo "Sine wave playback started into NullSink"
 
-      - name: Run tests (no X11, with audio)
+      - name: Run tests (No X11)
         env:
           VIRTUAL_AUDIO_READY: "1"
           XDG_RUNTIME_DIR: /tmp/pw-nodeps
           PIPEWIRE_REMOTE: /tmp/pw-nodeps/pipewire-0
-        run: xvfb-run -a npm test
+        run: |
+          npm test || { echo "--- PIPEWIRE LOG ---"; cat /tmp/pw.log; echo "--- WIREPLUMBER LOG ---"; cat /tmp/wp.log; exit 1; }
