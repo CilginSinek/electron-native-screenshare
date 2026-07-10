@@ -164,7 +164,8 @@ jobs:
             wireplumber \
             gstreamer1.0-pipewire \
             ffmpeg \
-            pulseaudio-utils
+            pulseaudio-utils \
+            xvfb
 
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
@@ -215,7 +216,7 @@ jobs:
           VIRTUAL_AUDIO_READY: "1"
           XDG_RUNTIME_DIR: /tmp/pipewire-runtime
           PIPEWIRE_REMOTE: /tmp/pipewire-runtime/pipewire-0
-        run: npm test
+        run: xvfb-run -a npm test
 
   # ───────────────────────────────────────────────────────────────────────────
   # LINUX NO-X11 — Tests with PulseAudio null sink, no X11 dependency.
@@ -294,4 +295,4 @@ jobs:
           VIRTUAL_AUDIO_READY: "1"
           XDG_RUNTIME_DIR: /tmp/pw-nodeps
           PIPEWIRE_REMOTE: /tmp/pw-nodeps/pipewire-0
-        run: npm test
+        run: xvfb-run -a npm test
