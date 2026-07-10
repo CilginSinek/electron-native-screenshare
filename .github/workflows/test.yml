@@ -187,7 +187,8 @@ jobs:
           mkdir -p $XDG_RUNTIME_DIR
 
           # Launch PipeWire daemon (headless — no physical hardware needed)
-          dbus-daemon --session --nofork --print-address &
+          dbus-daemon --session --print-address=1 --fork > /tmp/dbus-addr
+          export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/dbus-addr)
           sleep 1
           pipewire > /tmp/pw.log 2>&1 &
           wireplumber > /tmp/wp.log 2>&1 &
@@ -278,7 +279,8 @@ jobs:
           sleep 2
 
           # Also start PipeWire daemon and WirePlumber so our native module can connect.
-          dbus-daemon --session --nofork --print-address &
+          dbus-daemon --session --print-address=1 --fork > /tmp/dbus-addr
+          export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/dbus-addr)
           sleep 1
           pipewire > /tmp/pw.log 2>&1 &
           sleep 1
