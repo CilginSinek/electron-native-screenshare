@@ -202,10 +202,10 @@ jobs:
           fi
           echo "PipeWire socket ready: $XDG_RUNTIME_DIR/pipewire-0"
 
-          # pw-loopback creates a capture source backed by a null sink —
-          # this is the correct way to get a readable audio stream without hardware.
+          # Create a virtual null sink so pw-play has somewhere to route its audio.
+          # Without a sink, pw-play will not create its output ports.
           PIPEWIRE_REMOTE=$XDG_RUNTIME_DIR/pipewire-0 \
-            pw-loopback --capture-props='media.class=Audio/Source node.name=null-source' &
+            pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=null-sink media.class=Audio/Sink object.linger=true audio.position=[ FL FR ] }'
           sleep 1
 
           # Feed a 440 Hz sine wave to PipeWire's default sink for 60 s
@@ -265,26 +265,20 @@ jobs:
       - name: Install dependencies and build (no X11)
         run: npm install
 
-      - name: Start PulseAudio null sink
+      - name: Start PipeWire and pipewire-pulse
         run: |
           export XDG_RUNTIME_DIR=/tmp/pw-nodeps
           mkdir -p $XDG_RUNTIME_DIR
-          # Start PulseAudio in daemon mode with a null (virtual) output sink.
-          # On ubuntu-22.04 pipewire-pulse bridges PulseAudio sessions to PipeWire,
-          # so our PipeWire-based module can enumerate and capture from this sink.
-          pulseaudio --daemonize=true \
-            --exit-idle-time=-1 \
-            --load="module-null-sink sink_name=NullSink" \
-            --log-target=file:/tmp/pw-nodeps/pulseaudio.log 2>/dev/null || true
-          sleep 2
 
-          # Also start PipeWire daemon and WirePlumber so our native module can connect.
+          # Start PipeWire, WirePlumber, and PipeWire-Pulse daemon
           dbus-daemon --session --print-address=1 --fork > /tmp/dbus-addr
           export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/dbus-addr)
           sleep 1
           pipewire > /tmp/pw.log 2>&1 &
           sleep 1
           wireplumber > /tmp/wp.log 2>&1 &
+          sleep 1
+          pipewire-pulse > /tmp/pwp.log 2>&1 &
           sleep 2
 
           if [ -S "$XDG_RUNTIME_DIR/pipewire-0" ]; then
@@ -295,11 +289,16 @@ jobs:
             ls /run/user/ 2>/dev/null || true
           fi
 
+          # Create a null sink so PipeWire has an endpoint
+          PIPEWIRE_REMOTE=$XDG_RUNTIME_DIR/pipewire-0 \
+            pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=null-sink media.class=Audio/Sink object.linger=true audio.position=[ FL FR ] }'
+          sleep 1
+
           # Feed 440 Hz sine into PulseAudio null sink for 60 s
-          export PULSE_RUNTIME_PATH=/tmp/pw-nodeps/pulse
+          # pipewire-pulse will translate this into a PipeWire AppNode
           ffmpeg -f lavfi -i sine=frequency=440:duration=60 \
-            -f pulse "NullSink" 2>/dev/null &
-          echo "Sine wave playback started into NullSink"
+            -f pulse "null-sink" 2>/dev/null &
+          echo "Sine wave playback started into pipewire-pulse"
 
       - name: Run tests (No X11)
         env:
