@@ -77,22 +77,17 @@ jobs:
           Start-Process -FilePath $ffmpeg -ArgumentList "-f lavfi -i sine=frequency=440:duration=120 -ar 48000 -ac 2 `"$wav`" -y" -Wait -NoNewWindow
           
           if (Test-Path $wav) {
-            # Start a background VBScript to keep WMPlayer playing for 120s.
-            # VBScript/wscript starts instantly compared to PowerShell Start-Job.
-            # This ensures audio is actively rendering throughout the npm test step.
-            $vbs = "$env:TEMP\play.vbs"
-            Add-Content -Path $vbs -Value "Set Sound = CreateObject(`"WMPlayer.OCX.7`")"
-            Add-Content -Path $vbs -Value "Sound.URL = `"$wav`""
-            Add-Content -Path $vbs -Value "Sound.Controls.play"
-            Add-Content -Path $vbs -Value "WScript.Sleep 120000"
-            
-            Start-Process -FilePath "wscript.exe" -ArgumentList "`"$vbs`"" -WindowStyle Hidden
-            Write-Host "Sine wave playback started via VBScript background process"
+            # Start a background PowerShell process using System.Media.SoundPlayer.
+            # Unlike WMPlayer or ffplay, SoundPlayer uses the low-level PlaySound API 
+            # which works flawlessly in headless environments without requiring a message pump.
+            $psCommand = "`$player = New-Object System.Media.SoundPlayer; `$player.SoundLocation = `'$wav`'; `$player.PlayLooping(); Start-Sleep -Seconds 120"
+            Start-Process -FilePath "powershell.exe" -ArgumentList "-WindowStyle Hidden -Command `"$psCommand`""
+            Write-Host "Sine wave playback started via System.Media.SoundPlayer"
           } else {
             Write-Warning "ffmpeg WAV generation failed -- audio capture tests may time out"
           }
-          # Give WMPlayer.OCX plenty of time to load and start rendering audio on slow CI runners
-          Start-Sleep -Seconds 10
+          # Give PowerShell a couple seconds to spin up the background process
+          Start-Sleep -Seconds 3
 
       - name: Run tests
         shell: powershell
