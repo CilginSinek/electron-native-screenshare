@@ -66,7 +66,8 @@ jobs:
           # Generate a 120-second 440 Hz sine WAV file, then play it in a loop via
           # Windows Media Player (no device-name guessing required).
           $wav = "$env:TEMP\sine440.wav"
-          & ffmpeg -f lavfi -i sine=frequency=440:duration=120 -ar 48000 -ac 2 $wav -y 2>$null
+          Start-Process -FilePath "ffmpeg" -ArgumentList "-f lavfi -i sine=frequency=440:duration=120 -ar 48000 -ac 2 `"$wav`" -y" -Wait -NoNewWindow
+          
           if (Test-Path $wav) {
             Add-Type -AssemblyName presentationCore
             $player = New-Object System.Windows.Media.MediaPlayer
