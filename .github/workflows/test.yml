@@ -65,20 +65,31 @@ jobs:
       - name: Install ffmpeg and play sine wave into virtual device (background)
         shell: powershell
         run: |
-          # ffmpeg/ffplay is available via Chocolatey but NOT in PATH by default on windows-2022.
+          # ffmpeg is available via Chocolatey but NOT in PATH by default on windows-2022.
           choco install ffmpeg -y --no-progress | Out-Null
           
-          # Find the exact path to ffplay.exe installed by Chocolatey
-          $ffplay = Get-Command ffplay -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
-          if (-not $ffplay) {
-            $ffplay = "C:\ProgramData\chocolatey\bin\ffplay.exe"
+          # Generate a 120-second 440 Hz sine WAV file
+          $wav = "$env:TEMP\sine440.wav"
+          $ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          if (-not $ffmpeg) { $ffmpeg = "C:\ProgramData\chocolatey\bin\ffmpeg.exe" }
+          
+          # Start-Process with -Wait avoids NativeCommandError from ffmpeg's stderr
+          Start-Process -FilePath $ffmpeg -ArgumentList "-f lavfi -i sine=frequency=440:duration=120 -ar 48000 -ac 2 `"$wav`" -y" -Wait -NoNewWindow
+          
+          if (Test-Path $wav) {
+            # Start a background PowerShell job to keep the COM object alive for 120s.
+            # This ensures audio continues playing during the npm test step.
+            Start-Job -ScriptBlock {
+              Add-Type -AssemblyName presentationCore
+              $player = New-Object System.Windows.Media.MediaPlayer
+              $player.Open([Uri]::new($args[0]))
+              $player.Play()
+              Start-Sleep -Seconds 120
+            } -ArgumentList $wav | Out-Null
+            Write-Host "Sine wave playback started via background PowerShell job"
+          } else {
+            Write-Warning "ffmpeg WAV generation failed -- audio capture tests may time out"
           }
-
-          # Play a 120-second 440 Hz sine wave in the background using the default audio endpoint.
-          # We use a separate process so it survives this setup step and plays DURING the npm test step.
-          # WASAPI loopback capture STOPS firing events if no audio is actively rendering, so this is critical.
-          Start-Process -FilePath $ffplay -ArgumentList "-f lavfi -i sine=frequency=440:duration=120 -nodisp -autoexit" -WindowStyle Hidden
-          Write-Host "Sine wave playback started via ffplay"
           Start-Sleep -Seconds 2
 
       - name: Run tests
