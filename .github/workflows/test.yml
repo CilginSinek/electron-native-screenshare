@@ -65,26 +65,20 @@ jobs:
       - name: Install ffmpeg and play sine wave into virtual device (background)
         shell: powershell
         run: |
-          # ffmpeg is available via Chocolatey but NOT in PATH by default on windows-2022.
+          # ffmpeg/ffplay is available via Chocolatey but NOT in PATH by default on windows-2022.
           choco install ffmpeg -y --no-progress | Out-Null
-          # Reload PATH so ffmpeg is visible in this session
-          $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
-                      [System.Environment]::GetEnvironmentVariable('Path','User')
-
-          # Generate a 120-second 440 Hz sine WAV file, then play it in a loop via
-          # Windows Media Player (no device-name guessing required).
-          $wav = "$env:TEMP\sine440.wav"
-          Start-Process -FilePath "ffmpeg" -ArgumentList "-f lavfi -i sine=frequency=440:duration=120 -ar 48000 -ac 2 `"$wav`" -y" -Wait -NoNewWindow
           
-          if (Test-Path $wav) {
-            Add-Type -AssemblyName presentationCore
-            $player = New-Object System.Windows.Media.MediaPlayer
-            $player.Open([Uri]::new($wav))
-            $player.Play()
-            Write-Host "Sine wave playback started via MediaPlayer"
-          } else {
-            Write-Warning "ffmpeg WAV generation failed -- audio capture tests may time out"
+          # Find the exact path to ffplay.exe installed by Chocolatey
+          $ffplay = Get-Command ffplay -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          if (-not $ffplay) {
+            $ffplay = "C:\ProgramData\chocolatey\bin\ffplay.exe"
           }
+
+          # Play a 120-second 440 Hz sine wave in the background using the default audio endpoint.
+          # We use a separate process so it survives this setup step and plays DURING the npm test step.
+          # WASAPI loopback capture STOPS firing events if no audio is actively rendering, so this is critical.
+          Start-Process -FilePath $ffplay -ArgumentList "-f lavfi -i sine=frequency=440:duration=120 -nodisp -autoexit" -WindowStyle Hidden
+          Write-Host "Sine wave playback started via ffplay"
           Start-Sleep -Seconds 2
 
       - name: Run tests
