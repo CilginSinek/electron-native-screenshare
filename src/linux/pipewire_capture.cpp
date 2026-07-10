@@ -276,11 +276,19 @@ static const struct pw_stream_events streamEvents = []() {
 }();
 
 // --- Registry listener for dynamic graph routing ---
-static void onRegistryGlobal(void* userdata, uint32_t id, uint32_t permissions,
-                              const char* type, uint32_t version,
-                              const struct spa_dict* props) {
+static void onRegistryGlobal(void* userdata, uint32_t id,
+                             uint32_t permissions, const char* type, uint32_t version,
+                             const struct spa_dict* props) {
     PipewireCapture::Impl* impl = static_cast<PipewireCapture::Impl*>(userdata);
-    if (!props) return;
+    
+    // DEBUG: print ALL globals to see if Ports are even being announced
+    if (!impl->includeMode) {
+        std::cout << "[DEBUG-REGISTRY] Global: id=" << id << " type=" << type << std::endl;
+    }
+
+    if (!impl->includeMode) {
+        if (!props) return;
+    }
 
     if (impl->includeMode) {
         // Legacy Include Mode (Single Node targeting)
@@ -517,10 +525,10 @@ void PipewireCapture::Start(DataCallback callback) {
         spa_zero(pImpl->streamListener);
         pw_stream_add_listener(pImpl->stream, &pImpl->streamListener, &streamEvents, this);
 
-        enum pw_stream_flags flags = PW_STREAM_FLAG_MAP_BUFFERS;
-        if (pImpl->includeMode) {
-            flags = (enum pw_stream_flags)(flags | PW_STREAM_FLAG_AUTOCONNECT);
-        }
+        // We ALWAYS need PW_STREAM_FLAG_AUTOCONNECT for the session manager to 
+        // negotiate the stream format and create ports. We prevent automatic linking
+        // in Exclude Mode via the PW_KEY_NODE_AUTOCONNECT="false" property set above.
+        enum pw_stream_flags flags = (enum pw_stream_flags)(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS);
 
         pw_stream_connect(
             pImpl->stream,
