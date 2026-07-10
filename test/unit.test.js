@@ -364,23 +364,32 @@ describe('Audio Capture', () => {
 
         try {
             mod.startCapture(process.pid, false, (data, _meta) => {
-                clearTimeout(timer);
-                mod.stopCapture();
+                try {
+                    clearTimeout(timer);
+                    mod.stopCapture();
 
-                const floats = new Float32Array(
-                    data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
-                );
+                    const floats = new Float32Array(
+                        data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+                    );
 
-                let allInRange = true;
-                for (let i = 0; i < floats.length; i++) {
-                    if (floats[i] < -1.5 || floats[i] > 1.5) {
-                        allInRange = false;
-                        break;
+                    let allInRange = true;
+                    let outOfBoundsValue = null;
+                    for (let i = 0; i < floats.length; i++) {
+                        if (floats[i] < -1.5 || floats[i] > 1.5) {
+                            allInRange = false;
+                            outOfBoundsValue = floats[i];
+                            break;
+                        }
                     }
-                }
 
-                expect(allInRange).toBe(true);
-                done();
+                    if (!allInRange) {
+                        throw new Error(`PCM value out of bounds: ${outOfBoundsValue}`);
+                    }
+                    expect(allInRange).toBe(true);
+                    done();
+                } catch (err) {
+                    done(err);
+                }
             });
         } catch (e) {
             clearTimeout(timer);
