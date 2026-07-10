@@ -207,8 +207,7 @@ jobs:
           # (covers the full Jest run including timeouts)
           PIPEWIRE_REMOTE=$XDG_RUNTIME_DIR/pipewire-0 \
             ffmpeg -f lavfi -i sine=frequency=440:duration=60 \
-              -f pipewire -i default \
-              -ar 48000 -ac 2 -y /dev/null 2>/dev/null &
+              -f au - | pw-play - &
           echo "Sine wave playback started"
 
       - name: Run tests
@@ -286,8 +285,7 @@ jobs:
 
           # Feed 440 Hz sine into PulseAudio null sink for 60 s
           ffmpeg -f lavfi -i sine=frequency=440:duration=60 \
-            -f pulse -device NullSink.monitor default \
-            -ar 48000 -ac 2 /dev/null 2>/dev/null &
+            -f pulse "NullSink" 2>/dev/null &
           echo "Sine wave playback started into NullSink"
 
       - name: Run tests (no X11, with audio)
