@@ -54,19 +54,29 @@ jobs:
             Write-Warning "VB-CABLE not detected -- audio capture tests will be skipped"
           }
 
-      - name: Play sine wave into virtual device (background)
+      - name: Install ffmpeg and play sine wave into virtual device (background)
         shell: powershell
         run: |
-          # ffmpeg is pre-installed on windows-2022 runners.
-          # Stream a 440 Hz sine for 120 s — covers the full test run.
-          # -f dshow writes to the DirectShow device (CABLE Input).
-          Start-Process -NoNewWindow -FilePath "ffmpeg" -ArgumentList (
-            "-f lavfi -i sine=frequency=440:duration=120 " +
-            "-f dshow -audio_device_name ""CABLE Input (VB-Audio Virtual Cable)"" " +
-            "-ar 48000 -ac 2 -y NUL"
-          )
+          # ffmpeg is available via Chocolatey but NOT in PATH by default on windows-2022.
+          choco install ffmpeg -y --no-progress | Out-Null
+          # Reload PATH so ffmpeg is visible in this session
+          $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
+                      [System.Environment]::GetEnvironmentVariable('Path','User')
+
+          # Generate a 120-second 440 Hz sine WAV file, then play it in a loop via
+          # Windows Media Player (no device-name guessing required).
+          $wav = "$env:TEMP\sine440.wav"
+          & ffmpeg -f lavfi -i sine=frequency=440:duration=120 -ar 48000 -ac 2 $wav -y 2>$null
+          if (Test-Path $wav) {
+            Add-Type -AssemblyName presentationCore
+            $player = New-Object System.Windows.Media.MediaPlayer
+            $player.Open([Uri]::new($wav))
+            $player.Play()
+            Write-Host "Sine wave playback started via MediaPlayer"
+          } else {
+            Write-Warning "ffmpeg WAV generation failed -- audio capture tests may time out"
+          }
           Start-Sleep -Seconds 2
-          Write-Host "Sine wave playback started"
 
       - name: Run tests
         shell: powershell
