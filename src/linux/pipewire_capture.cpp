@@ -218,20 +218,21 @@ static void tryCreateLinks(PipewireCapture::Impl* impl) {
                 if (match) {
                     uint64_t linkKey = ((uint64_t)outPort.id << 32) | inPort.id;
                     if (impl->activeLinksMap.find(linkKey) == impl->activeLinksMap.end()) {
-                        struct pw_properties* p = pw_properties_new(nullptr, nullptr);
                         char bufOutNode[32], bufOutPort[32], bufInNode[32], bufInPort[32];
                         snprintf(bufOutNode, sizeof(bufOutNode), "%u", app.id);
                         snprintf(bufOutPort, sizeof(bufOutPort), "%u", outPort.id);
                         snprintf(bufInNode, sizeof(bufInNode), "%u", impl->myNodeId);
                         snprintf(bufInPort, sizeof(bufInPort), "%u", inPort.id);
 
-                        pw_properties_set(p, PW_KEY_LINK_OUTPUT_NODE, bufOutNode);
-                        pw_properties_set(p, PW_KEY_LINK_OUTPUT_PORT, bufOutPort);
-                        pw_properties_set(p, PW_KEY_LINK_INPUT_NODE, bufInNode);
-                        pw_properties_set(p, PW_KEY_LINK_INPUT_PORT, bufInPort);
+                        struct spa_dict_item items[4];
+                        items[0] = SPA_DICT_ITEM_INIT(PW_KEY_LINK_OUTPUT_NODE, bufOutNode);
+                        items[1] = SPA_DICT_ITEM_INIT(PW_KEY_LINK_OUTPUT_PORT, bufOutPort);
+                        items[2] = SPA_DICT_ITEM_INIT(PW_KEY_LINK_INPUT_NODE, bufInNode);
+                        items[3] = SPA_DICT_ITEM_INIT(PW_KEY_LINK_INPUT_PORT, bufInPort);
+                        struct spa_dict dict = SPA_DICT_INIT(items, 4);
                         
                         struct pw_proxy* link = (struct pw_proxy*)pw_core_create_object(
-                            impl->core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &p->dict, 0);
+                            impl->core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &dict, 0);
                         if (link) {
                             std::cout << "[DEBUG] PipeWire created link: outNode=" << app.id 
                                       << " outPort=" << outPort.id 
@@ -241,7 +242,6 @@ static void tryCreateLinks(PipewireCapture::Impl* impl) {
                         } else {
                             std::cout << "[DEBUG] PipeWire failed to create link!" << std::endl;
                         }
-                        pw_properties_free(p);
                     }
                 }
             }
