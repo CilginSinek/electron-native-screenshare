@@ -166,6 +166,7 @@ struct PipewireCapture::Impl {
 
     // State for Dynamic Graph Link Engine (Exclude Mode)
     std::map<uint32_t, AppNode> appNodes;
+    uint32_t myNodeId = PW_ID_ANY;
     std::vector<PortInfo> myInPorts;
     std::map<uint32_t, std::vector<PortInfo>> allInPorts;
     std::map<uint32_t, std::vector<PortInfo>> allOutPorts;
