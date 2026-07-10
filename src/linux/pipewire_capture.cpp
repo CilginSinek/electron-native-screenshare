@@ -351,10 +351,12 @@ void PipewireCapture::Start(DataCallback callback) {
             char nodeIdStr[32];
             snprintf(nodeIdStr, sizeof(nodeIdStr), "%u", pImpl->targetNodeId);
             pw_properties_set(props, PW_KEY_TARGET_OBJECT, nodeIdStr);
-        } else if (!pImpl->includeMode && pImpl->targetNodeId != PW_ID_ANY) {
-            char nodeIdStr[32];
-            snprintf(nodeIdStr, sizeof(nodeIdStr), "%u", pImpl->targetNodeId);
-            pw_properties_set(props, PW_KEY_TARGET_OBJECT, nodeIdStr);
+        } else if (!pImpl->includeMode) {
+            if (pImpl->targetNodeId != PW_ID_ANY) {
+                char nodeIdStr[32];
+                snprintf(nodeIdStr, sizeof(nodeIdStr), "%u", pImpl->targetNodeId);
+                pw_properties_set(props, PW_KEY_TARGET_OBJECT, nodeIdStr);
+            }
             pw_properties_set(props, PW_KEY_STREAM_CAPTURE_SINK, "true");
         }
 
