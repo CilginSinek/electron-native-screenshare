@@ -219,10 +219,16 @@ static void tryCreateLinks(PipewireCapture::Impl* impl) {
                     uint64_t linkKey = ((uint64_t)outPort.id << 32) | inPort.id;
                     if (impl->activeLinksMap.find(linkKey) == impl->activeLinksMap.end()) {
                         struct pw_properties* p = pw_properties_new(nullptr, nullptr);
-                        pw_properties_setf(p, PW_KEY_LINK_OUTPUT_NODE, "%u", app.id);
-                        pw_properties_setf(p, PW_KEY_LINK_OUTPUT_PORT, "%u", outPort.id);
-                        pw_properties_setf(p, PW_KEY_LINK_INPUT_NODE, "%u", impl->myNodeId);
-                        pw_properties_setf(p, PW_KEY_LINK_INPUT_PORT, "%u", inPort.id);
+                        char bufOutNode[32], bufOutPort[32], bufInNode[32], bufInPort[32];
+                        snprintf(bufOutNode, sizeof(bufOutNode), "%u", app.id);
+                        snprintf(bufOutPort, sizeof(bufOutPort), "%u", outPort.id);
+                        snprintf(bufInNode, sizeof(bufInNode), "%u", impl->myNodeId);
+                        snprintf(bufInPort, sizeof(bufInPort), "%u", inPort.id);
+
+                        pw_properties_set(p, PW_KEY_LINK_OUTPUT_NODE, bufOutNode);
+                        pw_properties_set(p, PW_KEY_LINK_OUTPUT_PORT, bufOutPort);
+                        pw_properties_set(p, PW_KEY_LINK_INPUT_NODE, bufInNode);
+                        pw_properties_set(p, PW_KEY_LINK_INPUT_PORT, bufInPort);
                         
                         struct pw_proxy* link = (struct pw_proxy*)pw_core_create_object(
                             impl->core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &p->dict, 0);
