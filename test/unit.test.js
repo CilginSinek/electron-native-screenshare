@@ -240,6 +240,12 @@ describe('Audio Capture', () => {
 
     beforeAll(() => { mod = require('../lib/index'); });
 
+    afterEach((done) => {
+        // Add a 500ms delay between tests to prevent WASAPI pipeline stalls
+        // from rapid-fire loopback client registration/deregistration.
+        setTimeout(done, 500);
+    });
+
     /**
      * This group only runs when a real or virtual audio render device exists.
      * In CI the workflow must:
