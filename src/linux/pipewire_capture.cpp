@@ -160,7 +160,7 @@ struct PipewireCapture::Impl {
     struct spa_hook registryListener = {};
     struct spa_hook streamListener = {};
 
-    uint32_t targetPid = 0;
+    std::vector<uint32_t> targetPids;
     bool includeMode = false;
     uint32_t targetNodeId = PW_ID_ANY;
 
@@ -311,8 +311,14 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
         const char* mediaClass = spa_dict_lookup(props, PW_KEY_MEDIA_CLASS);
         if (mediaClass && strcmp(mediaClass, "Stream/Output/Audio") == 0) {
             const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
-            if (pidStr && (uint32_t)atoi(pidStr) == impl->targetPid) {
-                impl->targetNodeId = id;
+            uint32_t pid = pidStr ? (uint32_t)atoi(pidStr) : 0;
+            if (pid != 0) {
+                for (uint32_t tPid : impl->targetPids) {
+                    if (pid == tPid) {
+                        impl->targetNodeId = id;
+                        break;
+                    }
+                }
             }
         }
         return;
@@ -326,8 +332,15 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
             const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
             uint32_t pid = pidStr ? (uint32_t)atoi(pidStr) : 0;
             
-            // Exclude the target PID!
-            if (pid != 0 && pid == impl->targetPid) return;
+            // Exclude the target PIDs!
+            bool isTarget = false;
+            for (uint32_t tPid : impl->targetPids) {
+                if (pid == tPid) {
+                    isTarget = true;
+                    break;
+                }
+            }
+            if (pid != 0 && isTarget) return;
 
             AppNode node;
             node.id = id;
@@ -408,14 +421,14 @@ PipewireCapture::~PipewireCapture() {
     }
 }
 
-int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::string& outError) {
+int PipewireCapture::Initialize(const std::vector<uint32_t>& processIds, bool isIncludeMode, std::string& outError) {
 #ifdef HAVE_PIPEWIRE
     if (!load_pipewire()) {
         outError = "PipeWire shared library not found. Audio capture is unavailable.";
         return -1;
     }
 
-    pImpl->targetPid = processId;
+    pImpl->targetPids = processIds;
     pImpl->includeMode = isIncludeMode;
 
     // pw_init is a process-lifetime singleton: call once, never deinit between sessions.
@@ -481,8 +494,7 @@ int PipewireCapture::Initialize(uint32_t processId, bool isIncludeMode, std::str
         pImpl->context = nullptr;
         pw_main_loop_destroy(pImpl->loop);
         pImpl->loop = nullptr;
-        outError = "Target process audio node not found (PID: " + std::to_string(processId)
-                   + "). The process may not be producing audio yet.";
+        outError = "Target process audio node not found. The processes may not be producing audio yet.";
         return -5;
     }
 

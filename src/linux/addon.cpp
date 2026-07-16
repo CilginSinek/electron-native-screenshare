@@ -20,9 +20,17 @@ static Napi::ThreadSafeFunction tsfn;
 Napi::Value StartCapture(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
 
-    uint32_t processId = 0;
-    if (info.Length() > 0 && info[0].IsNumber()) {
-        processId = info[0].As<Napi::Number>().Uint32Value();
+    std::vector<uint32_t> processIds;
+    if (info.Length() > 0) {
+        if (info[0].IsNumber()) {
+            processIds.push_back(info[0].As<Napi::Number>().Uint32Value());
+        } else if (info[0].IsArray()) {
+            Napi::Array arr = info[0].As<Napi::Array>();
+            for (uint32_t i = 0; i < arr.Length(); i++) {
+                Napi::Value val = arr[i];
+                if (val.IsNumber()) processIds.push_back(val.As<Napi::Number>().Uint32Value());
+            }
+        }
     }
 
     bool isIncludeMode = false;
@@ -36,12 +44,12 @@ Napi::Value StartCapture(const Napi::CallbackInfo& info) {
     }
 
     std::string pwErrorMsg;
-    int result = pwCapture.Initialize(processId, isIncludeMode, pwErrorMsg);
+    int result = pwCapture.Initialize(processIds, isIncludeMode, pwErrorMsg);
     if (result == 0 && pwErrorMsg.empty()) {
         usingPulseAudio = false;
     } else {
         std::string paErrorMsg;
-        int paResult = paCapture.Initialize(processId, isIncludeMode, paErrorMsg);
+        int paResult = paCapture.Initialize(processIds, isIncludeMode, paErrorMsg);
         if (paResult == 0 && paErrorMsg.empty()) {
             usingPulseAudio = true;
         } else {

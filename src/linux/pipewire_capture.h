@@ -36,7 +36,7 @@ public:
      * @param outError Human-readable error message on failure
      * @return 0 on success, non-zero on failure
      */
-    int Initialize(uint32_t processId, bool isIncludeMode, std::string& outError);
+    int Initialize(const std::vector<uint32_t>& processIds, bool isIncludeMode, std::string& outError);
 
     /**
      * Start capturing audio. Calls callback on a background thread.
