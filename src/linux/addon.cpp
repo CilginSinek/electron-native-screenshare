@@ -9,8 +9,12 @@
 
 #include <napi.h>
 #include "pipewire_capture.h"
+#include "pulseaudio_capture.h"
+#include <iostream>
 
-static PipewireCapture capture;
+static PipewireCapture pwCapture;
+static PulseAudioCapture paCapture;
+static bool usingPulseAudio = false;
 static Napi::ThreadSafeFunction tsfn;
 
 Napi::Value StartCapture(const Napi::CallbackInfo& info) {
@@ -31,13 +35,21 @@ Napi::Value StartCapture(const Napi::CallbackInfo& info) {
         return env.Null();
     }
 
-    std::string errorMsg;
-    int result = capture.Initialize(processId, isIncludeMode, errorMsg);
-    if (result != 0 || !errorMsg.empty()) {
-        char buf[512];
-        snprintf(buf, sizeof(buf), "PipeWire Init Failed: %s (code: %d)", errorMsg.c_str(), result);
-        Napi::TypeError::New(env, buf).ThrowAsJavaScriptException();
-        return env.Null();
+    std::string pwErrorMsg;
+    int result = pwCapture.Initialize(processId, isIncludeMode, pwErrorMsg);
+    if (result == 0 && pwErrorMsg.empty()) {
+        usingPulseAudio = false;
+    } else {
+        std::string paErrorMsg;
+        int paResult = paCapture.Initialize(processId, isIncludeMode, paErrorMsg);
+        if (paResult == 0 && paErrorMsg.empty()) {
+            usingPulseAudio = true;
+        } else {
+            std::cerr << "[electron-native-screenshare] Both capture methods failed." << std::endl;
+            std::cerr << "  - PipeWire: " << pwErrorMsg << " (code " << result << ")" << std::endl;
+            std::cerr << "  - PulseAudio: " << paErrorMsg << " (code " << paResult << ")" << std::endl;
+            return Napi::Boolean::New(env, false);
+        }
     }
 
     tsfn = Napi::ThreadSafeFunction::New(
@@ -76,13 +88,21 @@ Napi::Value StartCapture(const Napi::CallbackInfo& info) {
         tsfn.NonBlockingCall(payload, napiCallback);
     };
 
-    capture.Start(callback);
+    if (usingPulseAudio) {
+        paCapture.Start(callback);
+    } else {
+        pwCapture.Start(callback);
+    }
     return Napi::Boolean::New(env, true);
 }
 
 Napi::Value StopCapture(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    capture.Stop();
+    if (usingPulseAudio) {
+        paCapture.Stop();
+    } else {
+        pwCapture.Stop();
+    }
     if (tsfn) {
         tsfn.Release();
         tsfn = nullptr;
