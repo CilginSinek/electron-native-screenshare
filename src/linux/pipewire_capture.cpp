@@ -19,7 +19,7 @@
 #include <vector>
 #include <map>
 
-#ifdef HAVE_PIPEWIRE
+#if 1
 #include <dlfcn.h>
 
 struct pw_proxy;
@@ -422,7 +422,7 @@ PipewireCapture::~PipewireCapture() {
 }
 
 int PipewireCapture::Initialize(const std::vector<uint32_t>& processIds, bool isIncludeMode, std::string& outError) {
-#ifdef HAVE_PIPEWIRE
+#if 1
     if (!load_pipewire()) {
         outError = "PipeWire shared library not found. Audio capture is unavailable.";
         return -1;
@@ -506,7 +506,7 @@ int PipewireCapture::Initialize(const std::vector<uint32_t>& processIds, bool is
 }
 
 void PipewireCapture::Start(DataCallback callback) {
-#ifdef HAVE_PIPEWIRE
+#if 1
     if (isCapturing.load() || !pImpl->loop) return;
 
     onData = callback;
@@ -618,7 +618,7 @@ void PipewireCapture::Start(DataCallback callback) {
 }
 
 void PipewireCapture::Stop() {
-#ifdef HAVE_PIPEWIRE
+#if 1
     if (!isCapturing.load()) return;
     isCapturing.store(false);
 
@@ -632,7 +632,7 @@ void PipewireCapture::Stop() {
 
 // --- getPidFromWindowId using X11 _NET_WM_PID ---
 
-#ifdef HAVE_X11
+#if 1
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <dlfcn.h>
@@ -675,7 +675,13 @@ static bool load_x11() {
 #endif
 
 uint32_t getPidFromWindowId(uint32_t windowId) {
-#ifdef HAVE_X11
+#if 1
+    const char* sessionType = getenv("XDG_SESSION_TYPE");
+    if (sessionType && std::string(sessionType) == "wayland") {
+        std::cerr << "[electron-native-screenshare] Wayland session detected. Skipping X11 PID resolution." << std::endl;
+        return 0;
+    }
+
     if (!load_x11()) {
         std::cerr << "[electron-native-screenshare] X11 shared library not found. Cannot resolve PID." << std::endl;
         return 0;

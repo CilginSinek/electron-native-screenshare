@@ -5,7 +5,7 @@
 #include <mutex>
 #include <chrono>
 
-#ifdef HAVE_PULSEAUDIO
+#if 1
 #include <dlfcn.h>
 #include <pulse/pulseaudio.h>
 
@@ -265,7 +265,7 @@ PulseAudioCapture::~PulseAudioCapture() {
 }
 
 int PulseAudioCapture::Initialize(const std::vector<uint32_t>& processIds, bool isIncludeMode, std::string& outError) {
-#ifdef HAVE_PULSEAUDIO
+#if 1
     if (!load_pulse()) {
         outError = "PulseAudio shared library not found. Audio capture is unavailable.";
         return -1;
@@ -347,7 +347,7 @@ int PulseAudioCapture::Initialize(const std::vector<uint32_t>& processIds, bool 
 }
 
 void PulseAudioCapture::Start(DataCallback callback) {
-#ifdef HAVE_PULSEAUDIO
+#if 1
     if (isCapturing.load() || !pImpl->mainloop) return;
 
     onData = callback;
@@ -429,7 +429,7 @@ void PulseAudioCapture::Start(DataCallback callback) {
 }
 
 void PulseAudioCapture::Stop() {
-#ifdef HAVE_PULSEAUDIO
+#if 1
     if (!isCapturing.load()) return;
     isCapturing.store(false);
 

@@ -10,11 +10,15 @@
 #include <napi.h>
 #include "pipewire_capture.h"
 #include "pulseaudio_capture.h"
+#include "jack_capture.h"
+#include "alsa_capture.h"
 #include <iostream>
 
-static PipewireCapture pwCapture;
 static PulseAudioCapture paCapture;
-static bool usingPulseAudio = false;
+static PipewireCapture pwCapture;
+static JackCapture jackCapture;
+static AlsaCapture alsaCapture;
+static int activeCaptureType = 0; // 1=PA, 2=PW, 3=JACK, 4=ALSA
 static Napi::ThreadSafeFunction tsfn;
 
 Napi::Value StartCapture(const Napi::CallbackInfo& info) {
@@ -43,20 +47,44 @@ Napi::Value StartCapture(const Napi::CallbackInfo& info) {
         return env.Null();
     }
 
-    std::string pwErrorMsg;
-    int result = pwCapture.Initialize(processIds, isIncludeMode, pwErrorMsg);
-    if (result == 0 && pwErrorMsg.empty()) {
-        usingPulseAudio = false;
+    std::string errorMsg;
+    int result = 0;
+    
+    // Fallback Chain: PulseAudio -> PipeWire -> JACK -> ALSA
+    result = paCapture.Initialize(processIds, isIncludeMode, errorMsg);
+    if (result == 0 && errorMsg.empty()) {
+        activeCaptureType = 1;
+        std::cout << "[electron-native-screenshare] Using PulseAudio Backend" << std::endl;
     } else {
-        std::string paErrorMsg;
-        int paResult = paCapture.Initialize(processIds, isIncludeMode, paErrorMsg);
-        if (paResult == 0 && paErrorMsg.empty()) {
-            usingPulseAudio = true;
+        std::cout << "[electron-native-screenshare] PulseAudio failed: " << errorMsg << ". Trying PipeWire..." << std::endl;
+        errorMsg.clear();
+        result = pwCapture.Initialize(processIds, isIncludeMode, errorMsg);
+        if (result == 0 && errorMsg.empty()) {
+            activeCaptureType = 2;
+            std::cout << "[electron-native-screenshare] Using PipeWire Backend" << std::endl;
         } else {
-            std::cerr << "[electron-native-screenshare] Both capture methods failed." << std::endl;
-            std::cerr << "  - PipeWire: " << pwErrorMsg << " (code " << result << ")" << std::endl;
-            std::cerr << "  - PulseAudio: " << paErrorMsg << " (code " << paResult << ")" << std::endl;
-            return Napi::Boolean::New(env, false);
+            std::cout << "[electron-native-screenshare] PipeWire failed: " << errorMsg << ". Trying JACK..." << std::endl;
+            errorMsg.clear();
+            result = jackCapture.Initialize(processIds, isIncludeMode, errorMsg);
+            if (result == 0 && errorMsg.empty()) {
+                activeCaptureType = 3;
+                std::cout << "[electron-native-screenshare] Using JACK Backend" << std::endl;
+            } else {
+                std::cout << "[electron-native-screenshare] JACK failed: " << errorMsg << ". Trying ALSA..." << std::endl;
+                errorMsg.clear();
+                result = alsaCapture.Initialize(processIds, isIncludeMode, errorMsg);
+                if (result == 0 && errorMsg.empty()) {
+                    activeCaptureType = 4;
+                    std::cout << "[electron-native-screenshare] Using ALSA Backend" << std::endl;
+                } else {
+                    std::cout << "[electron-native-screenshare] ALSA failed: " << errorMsg << std::endl;
+                    std::cerr << "[electron-native-screenshare] All Linux audio backends failed to initialize!" << std::endl;
+                    char buf[512];
+                    snprintf(buf, sizeof(buf), "All Linux audio backends failed. Last error (ALSA): %s", errorMsg.c_str());
+                    Napi::TypeError::New(env, buf).ThrowAsJavaScriptException();
+                    return env.Null();
+                }
+            }
         }
     }
 
@@ -96,21 +124,34 @@ Napi::Value StartCapture(const Napi::CallbackInfo& info) {
         tsfn.NonBlockingCall(payload, napiCallback);
     };
 
-    if (usingPulseAudio) {
-        paCapture.Start(callback);
-    } else {
+    if (activeCaptureType == 1) {
+        paCapture.Start([callback](const uint8_t* data, size_t length, PulseAudioCapture::AudioMetadata m) {
+            PipewireCapture::AudioMetadata pw_meta = {m.sampleRate, m.channels, m.bitsPerSample, m.isFloat};
+            callback(data, length, pw_meta);
+        });
+    } else if (activeCaptureType == 2) {
         pwCapture.Start(callback);
+    } else if (activeCaptureType == 3) {
+        jackCapture.Start([callback](const uint8_t* data, size_t length, JackCapture::AudioMetadata m) {
+            PipewireCapture::AudioMetadata pw_meta = {m.sampleRate, m.channels, m.bitsPerSample, m.isFloat};
+            callback(data, length, pw_meta);
+        });
+    } else if (activeCaptureType == 4) {
+        alsaCapture.Start([callback](const uint8_t* data, size_t length, AlsaCapture::AudioMetadata m) {
+            PipewireCapture::AudioMetadata pw_meta = {m.sampleRate, m.channels, m.bitsPerSample, m.isFloat};
+            callback(data, length, pw_meta);
+        });
     }
     return Napi::Boolean::New(env, true);
 }
 
 Napi::Value StopCapture(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    if (usingPulseAudio) {
-        paCapture.Stop();
-    } else {
-        pwCapture.Stop();
-    }
+    if (activeCaptureType == 1) paCapture.Stop();
+    else if (activeCaptureType == 2) pwCapture.Stop();
+    else if (activeCaptureType == 3) jackCapture.Stop();
+    else if (activeCaptureType == 4) alsaCapture.Stop();
+    activeCaptureType = 0;
     if (tsfn) {
         tsfn.Release();
         tsfn = nullptr;

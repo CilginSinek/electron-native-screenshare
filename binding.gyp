@@ -50,7 +50,9 @@
           "sources": [
             "src/linux/addon.cpp",
             "src/linux/pipewire_capture.cpp",
-            "src/linux/pulseaudio_capture.cpp"
+            "src/linux/pulseaudio_capture.cpp",
+            "src/linux/jack_capture.cpp",
+            "src/linux/alsa_capture.cpp"
           ],
           "cflags_cc": [
             "-std=c++17",
@@ -59,14 +61,10 @@
             "<!@(pkg-config --cflags x11 2>/dev/null || echo '')"
           ],
           "defines": [
-            "<!@(pkg-config --exists libpipewire-0.3 && echo 'HAVE_PIPEWIRE' || echo 'DISABLE_PIPEWIRE')",
-            "<!@(pkg-config --exists libpulse && echo 'HAVE_PULSEAUDIO' || echo 'DISABLE_PULSEAUDIO')",
-            "<!@(pkg-config --exists x11 && echo 'HAVE_X11' || echo 'DISABLE_X11')"
+            "USE_DYNAMIC_LOADING"
           ],
           "libraries": [
-            "<!@(pkg-config --libs libpipewire-0.3 2>/dev/null || echo '')",
-            "<!@(pkg-config --libs libpulse 2>/dev/null || echo '')",
-            "<!@(pkg-config --libs x11 2>/dev/null || echo '')"
+            "-ldl"
           ]
         }]
       ]
