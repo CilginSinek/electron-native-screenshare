@@ -381,18 +381,22 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
             fprintf(stderr, "[DEBUG-REGISTRY] Found Audio Output Node id=%d, name='%s', app='%s', pid=%u\n", 
                     id, nameStr ? nameStr : "null", appNameStr ? appNameStr : "null", pid);
 
-            // Exclude the target PIDs (and their descendants)!
             bool isTarget = false;
             for (uint32_t tPid : impl->targetPids) {
                 if (is_descendant_pid(tPid, pid)) {
                     isTarget = true;
-                    fprintf(stderr, "[DEBUG-REGISTRY]   -> MATCHED Target PID %u (is_descendant of %u) -> EXCLUDED\n", pid, tPid);
+                    fprintf(stderr, "[DEBUG-REGISTRY]   -> MATCHED Target PID %u (is_descendant of %u) -> IS_TARGET\n", pid, tPid);
                     break;
                 }
             }
-            if (pid != 0 && isTarget) return;
             
-            fprintf(stderr, "[DEBUG-REGISTRY]   -> NOT Excluded. Adding to capture list.\n");
+            bool shouldLink = impl->includeMode ? isTarget : (pid != 0 && !isTarget);
+            if (!shouldLink) {
+                fprintf(stderr, "[DEBUG-REGISTRY]   -> Ignoring node for capture (shouldLink=false).\n");
+                return;
+            }
+            
+            fprintf(stderr, "[DEBUG-REGISTRY]   -> Adding to capture list (shouldLink=true).\n");
 
             AppNode node;
             node.id = id;
@@ -536,19 +540,8 @@ int PipewireCapture::Initialize(const std::vector<uint32_t>& processIds, bool is
     }
     done_enumerate:
 
-    if (pImpl->includeMode && pImpl->targetNodeId == PW_ID_ANY) {
-        // Tear down before returning error so the caller starts clean.
-        pw_proxy_destroy((struct pw_proxy*)pImpl->registry);
-        pImpl->registry = nullptr;
-        pw_core_disconnect(pImpl->core);
-        pImpl->core = nullptr;
-        pw_context_destroy(pImpl->context);
-        pImpl->context = nullptr;
-        pw_main_loop_destroy(pImpl->loop);
-        pImpl->loop = nullptr;
-        outError = "Target process audio node not found. The processes may not be producing audio yet.";
-        return -5;
-    }
+    // We no longer fail if the target node is missing in include mode.
+    // Dynamic linking will connect it whenever it appears.
 
     return 0;
 #else
@@ -583,16 +576,9 @@ void PipewireCapture::Start(DataCallback callback) {
             nullptr
         );
 
-        if (pImpl->includeMode && pImpl->targetNodeId != PW_ID_ANY) {
-            char nodeIdStr[32];
-            snprintf(nodeIdStr, sizeof(nodeIdStr), "%u", pImpl->targetNodeId);
-            pw_properties_set(props, PW_KEY_TARGET_OBJECT, nodeIdStr);
-        } else if (!pImpl->includeMode) {
-            // Exclude Mode: We do NOT use target_object or capture_sink.
-            // We also explicitly disable autoconnect so the session manager
-            // doesn't route us to the default sink.
-            pw_properties_set(props, PW_KEY_NODE_AUTOCONNECT, "false");
-        }
+        // Unify routing: Disable autoconnect for BOTH modes.
+        // We will dynamically create links via tryCreateLinks when the stream is STREAMING.
+        pw_properties_set(props, PW_KEY_NODE_AUTOCONNECT, "false");
         
         // Low latency configuration
         pw_properties_set(props, PW_KEY_NODE_LATENCY, "256/48000");

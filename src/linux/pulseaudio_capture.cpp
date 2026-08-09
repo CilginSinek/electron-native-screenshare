@@ -60,6 +60,7 @@ struct PulseSyms {
     pa_context_state_t (*context_get_state)(const pa_context*);
     void (*context_set_state_callback)(pa_context*, pa_context_notify_cb_t, void*);
     pa_operation* (*context_get_server_info)(pa_context*, pa_server_info_cb_t, void*);
+    pa_operation* (*context_get_sink_info_by_name)(pa_context*, const char*, pa_sink_info_cb_t, void*);
     pa_operation* (*context_get_sink_input_info_list)(pa_context*, pa_sink_input_info_cb_t, void*);
     pa_operation* (*context_move_sink_input_by_name)(pa_context*, uint32_t, const char*, pa_context_success_cb_t, void*);
 
@@ -106,6 +107,7 @@ static bool load_pulse() {
     syms->context_get_state = (decltype(syms->context_get_state))dlsym(handle, "pa_context_get_state");
     syms->context_set_state_callback = (decltype(syms->context_set_state_callback))dlsym(handle, "pa_context_set_state_callback");
     syms->context_get_server_info = (decltype(syms->context_get_server_info))dlsym(handle, "pa_context_get_server_info");
+    syms->context_get_sink_info_by_name = (decltype(syms->context_get_sink_info_by_name))dlsym(handle, "pa_context_get_sink_info_by_name");
     syms->context_get_sink_input_info_list = (decltype(syms->context_get_sink_input_info_list))dlsym(handle, "pa_context_get_sink_input_info_list");
     syms->context_move_sink_input_by_name = (decltype(syms->context_move_sink_input_by_name))dlsym(handle, "pa_context_move_sink_input_by_name");
     syms->context_load_module = (decltype(syms->context_load_module))dlsym(handle, "pa_context_load_module");
@@ -149,6 +151,7 @@ static bool load_pulse() {
 #define my_pa_context_get_state pa_syms->context_get_state
 #define my_pa_context_set_state_callback pa_syms->context_set_state_callback
 #define my_pa_context_get_server_info pa_syms->context_get_server_info
+#define my_pa_context_get_sink_info_by_name pa_syms->context_get_sink_info_by_name
 #define my_pa_context_get_sink_input_info_list pa_syms->context_get_sink_input_info_list
 #define my_pa_context_move_sink_input_by_name pa_syms->context_move_sink_input_by_name
 #define my_pa_context_load_module pa_syms->context_load_module
@@ -185,8 +188,9 @@ struct PulseAudioCapture::Impl {
     // Loaded modules tracking to clean them up
     uint32_t nullSinkModuleId = PA_INVALID_INDEX;
     uint32_t loopbackModuleId = PA_INVALID_INDEX;
+    uint32_t virtualSinkIndex = (uint32_t)-1;
 
-    bool contextReady = false;
+    std::atomic<bool> contextReady{false};
 
     std::thread captureThread;
     std::thread monitorThread; // to poll new sink inputs periodically
@@ -251,15 +255,20 @@ static void sink_input_cb(pa_context* c, const pa_sink_input_info* i, int eol, v
         }
     }
 
-    if (impl->includeMode && isTarget) {
-        // Move app to virtual sink so we capture it quietly
-        pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->virtualSinkName.c_str(), nullptr, nullptr);
-        if (opMv) my_pa_operation_unref(opMv);
-    } else if (!impl->includeMode && !isTarget) {
-        // Exclude mode: Move NON-TARGET apps to the virtual sink!
-        fprintf(stderr, "[DEBUG-SINK]   -> NOT Target. Moving to virtual sink.\n");
-        pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->virtualSinkName.c_str(), nullptr, nullptr);
-        if (opMv) my_pa_operation_unref(opMv);
+    bool shouldBeOnVirtualSink = (impl->includeMode && isTarget) || (!impl->includeMode && !isTarget);
+
+    if (shouldBeOnVirtualSink) {
+        if (impl->virtualSinkIndex != (uint32_t)-1 && i->sink != impl->virtualSinkIndex) {
+            fprintf(stderr, "[DEBUG-SINK]   -> Moving to virtual sink.\n");
+            pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->virtualSinkName.c_str(), nullptr, nullptr);
+            if (opMv) my_pa_operation_unref(opMv);
+        }
+    } else {
+        if (impl->virtualSinkIndex != (uint32_t)-1 && i->sink == impl->virtualSinkIndex) {
+            fprintf(stderr, "[DEBUG-SINK]   -> Moving BACK to actual sink (fixing auto-route).\n");
+            pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->actualSinkName.c_str(), nullptr, nullptr);
+            if (opMv) my_pa_operation_unref(opMv);
+        }
     }
 }
 
@@ -368,6 +377,15 @@ int PulseAudioCapture::Initialize(const std::vector<uint32_t>& processIds, bool 
     std::string nullSinkArgs = "sink_name=" + pImpl->virtualSinkName + " sink_properties=device.description=electron_app_capture";
     pa_operation* opModNull = my_pa_context_load_module(pImpl->context, "module-null-sink", nullSinkArgs.c_str(), module_null_sink_loaded_cb, pImpl);
     run_pulse_operations_sync(pImpl, opModNull);
+
+    // Fetch the virtual sink's index so we can reliably check if an app is on it
+    pa_operation* opSinkInfo = my_pa_context_get_sink_info_by_name(pImpl->context, pImpl->virtualSinkName.c_str(), [](pa_context*, const pa_sink_info* i, int eol, void* userdata) {
+        if (i && eol == 0) {
+            auto* impl = static_cast<PulseAudioCapture::Impl*>(userdata);
+            impl->virtualSinkIndex = i->index;
+        }
+    }, pImpl);
+    run_pulse_operations_sync(pImpl, opSinkInfo);
 
     // In both modes, we capture from virtualMonitorSource and loop it back to the actual hardware sink.
     // Include mode: Only the target app is on the virtual sink.
