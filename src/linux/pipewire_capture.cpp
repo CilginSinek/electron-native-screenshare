@@ -311,17 +311,15 @@ static void onStreamStateChanged(void* userdata, enum pw_stream_state old,
     }
     
     if (state == PW_STREAM_STATE_PAUSED || state == PW_STREAM_STATE_STREAMING) {
-        if (!self->pImpl->includeMode) {
-            std::lock_guard<std::mutex> lock(self->pImpl->mutex);
-            if (self->pImpl->myNodeId == PW_ID_ANY) {
-                self->pImpl->myNodeId = pw_stream_get_node_id(self->pImpl->stream);
-                std::cout << "[DEBUG] Stream Node ID resolved: " << self->pImpl->myNodeId << std::endl;
-                if (self->pImpl->allInPorts.count(self->pImpl->myNodeId)) {
-                    self->pImpl->myInPorts = self->pImpl->allInPorts[self->pImpl->myNodeId];
-                    std::cout << "[DEBUG] Grabbed " << self->pImpl->myInPorts.size() << " input ports retroactively." << std::endl;
-                }
-                tryCreateLinks(self->pImpl);
+        std::lock_guard<std::mutex> lock(self->pImpl->mutex);
+        if (self->pImpl->myNodeId == PW_ID_ANY) {
+            self->pImpl->myNodeId = pw_stream_get_node_id(self->pImpl->stream);
+            std::cout << "[DEBUG] Stream Node ID resolved: " << self->pImpl->myNodeId << std::endl;
+            if (self->pImpl->allInPorts.count(self->pImpl->myNodeId)) {
+                self->pImpl->myInPorts = self->pImpl->allInPorts[self->pImpl->myNodeId];
+                std::cout << "[DEBUG] Grabbed " << self->pImpl->myInPorts.size() << " input ports retroactively." << std::endl;
             }
+            tryCreateLinks(self->pImpl);
         }
     }
 }
@@ -341,34 +339,11 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
     PipewireCapture::Impl* impl = static_cast<PipewireCapture::Impl*>(userdata);
     
     // DEBUG: print ALL globals to see if Ports are even being announced
-    if (!impl->includeMode) {
-        std::cout << "[DEBUG-REGISTRY] Global: id=" << id << " type=" << type << std::endl;
-    }
+    std::cout << "[DEBUG-REGISTRY] Global: id=" << id << " type=" << type << std::endl;
 
-    if (!impl->includeMode) {
-        if (!props) return;
-    }
+    if (!props) return;
 
-    if (impl->includeMode) {
-        // Legacy Include Mode (Single Node targeting)
-        if (strcmp(type, PW_TYPE_INTERFACE_Node) != 0) return;
-        const char* mediaClass = spa_dict_lookup(props, PW_KEY_MEDIA_CLASS);
-        if (mediaClass && strcmp(mediaClass, "Stream/Output/Audio") == 0) {
-            const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
-            uint32_t pid = pidStr ? (uint32_t)atoi(pidStr) : 0;
-            if (pid != 0) {
-                for (uint32_t tPid : impl->targetPids) {
-                    if (is_descendant_pid(tPid, pid)) {
-                        impl->targetNodeId = id;
-                        break;
-                    }
-                }
-            }
-        }
-        return;
-    }
-
-    // Exclude Mode: Dynamic graph linking
+    // Dynamic graph linking (Unified for Include and Exclude Mode)
     std::lock_guard<std::mutex> lock(impl->mutex);
     if (strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
         const char* mediaClass = spa_dict_lookup(props, PW_KEY_MEDIA_CLASS);
@@ -442,11 +417,9 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
 
 static void onRegistryGlobalRemove(void* userdata, uint32_t id) {
     PipewireCapture::Impl* impl = static_cast<PipewireCapture::Impl*>(userdata);
-    if (!impl->includeMode) {
-        std::lock_guard<std::mutex> lock(impl->mutex);
-        impl->appNodes.erase(id);
-        // Let PipeWire auto-destroy the links on the server side when nodes/ports vanish.
-    }
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    impl->appNodes.erase(id);
+    // Let PipeWire auto-destroy the links on the server side when nodes/ports vanish.
 }
 
 static const struct pw_registry_events registryEvents = []() {
