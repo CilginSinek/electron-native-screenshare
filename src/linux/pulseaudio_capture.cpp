@@ -5,6 +5,7 @@
 #include <mutex>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <unistd.h>
 
 static bool is_descendant_pid(uint32_t target_pid, uint32_t query_pid) {
@@ -18,20 +19,23 @@ static bool is_descendant_pid(uint32_t target_pid, uint32_t query_pid) {
         FILE* f = fopen(path, "r");
         if (!f) break;
         
-        uint32_t pid;
-        char comm[256];
+        char buffer[1024];
+        if (!fgets(buffer, sizeof(buffer), f)) {
+            fclose(f);
+            break;
+        }
+        fclose(f);
+        
+        char* last_paren = strrchr(buffer, ')');
+        if (!last_paren) break;
+        
         char state;
         uint32_t ppid = 0;
-        
-        // Format: %d (%s) %c %d ...
-        // We only care about the 4th field (ppid)
-        if (fscanf(f, "%u %s %c %u", &pid, comm, &state, &ppid) == 4) {
-            fclose(f);
+        if (sscanf(last_paren + 1, " %c %u", &state, &ppid) == 2) {
             if (ppid == target_pid) return true;
-            if (ppid == current_pid) break; // cycle or root
+            if (ppid == current_pid || ppid == 0) break; // cycle or root
             current_pid = ppid;
         } else {
-            fclose(f);
             break;
         }
     }
@@ -243,7 +247,6 @@ static void sink_input_cb(pa_context* c, const pa_sink_input_info* i, int eol, v
         if (opMv) my_pa_operation_unref(opMv);
     } else if (!impl->includeMode && !isTarget) {
         // Exclude mode: Move NON-TARGET apps to the virtual sink!
-        // Target app remains on Hardware Sink (so user hears it but it is not captured)
         pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->virtualSinkName.c_str(), nullptr, nullptr);
         if (opMv) my_pa_operation_unref(opMv);
     }
