@@ -228,15 +228,21 @@ static void sink_input_cb(pa_context* c, const pa_sink_input_info* i, int eol, v
     if (eol != 0 || !i) return;
     auto* impl = static_cast<PulseAudioCapture::Impl*>(userdata);
 
+    const char* nameStr = my_pa_proplist_gets(i->proplist, PA_PROP_APPLICATION_NAME);
     const char* pidStr = my_pa_proplist_gets(i->proplist, PA_PROP_APPLICATION_PROCESS_ID);
+    
     if (!pidStr) return;
 
     uint32_t pid = (uint32_t)atoi(pidStr);
+    
+    fprintf(stderr, "[DEBUG-SINK] Found Sink Input id=%d, name='%s', pid=%u\n", 
+            i->index, nameStr ? nameStr : "null", pid);
 
     bool isTarget = false;
     for (uint32_t targetPid : impl->targetPids) {
         if (is_descendant_pid(targetPid, pid)) {
             isTarget = true;
+            fprintf(stderr, "[DEBUG-SINK]   -> MATCHED Target PID %u (is_descendant of %u) -> IS_TARGET\n", pid, targetPid);
             break;
         }
     }
@@ -247,6 +253,7 @@ static void sink_input_cb(pa_context* c, const pa_sink_input_info* i, int eol, v
         if (opMv) my_pa_operation_unref(opMv);
     } else if (!impl->includeMode && !isTarget) {
         // Exclude mode: Move NON-TARGET apps to the virtual sink!
+        fprintf(stderr, "[DEBUG-SINK]   -> NOT Target. Moving to virtual sink.\n");
         pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->virtualSinkName.c_str(), nullptr, nullptr);
         if (opMv) my_pa_operation_unref(opMv);
     }
@@ -442,7 +449,14 @@ void PulseAudioCapture::Start(DataCallback callback) {
         const char* sourceStr = pImpl->virtualMonitorSource.c_str();
         if (sourceStr && sourceStr[0] == '\0') sourceStr = nullptr;
 
-        if (my_pa_stream_connect_record(pImpl->stream, sourceStr, nullptr, PA_STREAM_NOFLAGS) < 0) {
+        pa_buffer_attr attr;
+        attr.maxlength = (uint32_t)-1;
+        attr.tlength = (uint32_t)-1;
+        attr.prebuf = (uint32_t)-1;
+        attr.minreq = (uint32_t)-1;
+        attr.fragsize = pa_usec_to_bytes(20000, &ss); // 20ms latency
+
+        if (my_pa_stream_connect_record(pImpl->stream, sourceStr, &attr, PA_STREAM_ADJUST_LATENCY) < 0) {
             std::cerr << "[electron-native-screenshare] Failed to connect PulseAudio record stream" << std::endl;
             isCapturing.store(false);
             return;

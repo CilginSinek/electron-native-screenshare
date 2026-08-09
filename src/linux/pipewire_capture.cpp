@@ -373,18 +373,26 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
     if (strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
         const char* mediaClass = spa_dict_lookup(props, PW_KEY_MEDIA_CLASS);
         if (mediaClass && strcmp(mediaClass, "Stream/Output/Audio") == 0) {
+            const char* nameStr = spa_dict_lookup(props, PW_KEY_NODE_NAME);
+            const char* appNameStr = spa_dict_lookup(props, PW_KEY_APP_NAME);
             const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
             uint32_t pid = pidStr ? (uint32_t)atoi(pidStr) : 0;
             
+            fprintf(stderr, "[DEBUG-REGISTRY] Found Audio Output Node id=%d, name='%s', app='%s', pid=%u\n", 
+                    id, nameStr ? nameStr : "null", appNameStr ? appNameStr : "null", pid);
+
             // Exclude the target PIDs (and their descendants)!
             bool isTarget = false;
             for (uint32_t tPid : impl->targetPids) {
                 if (is_descendant_pid(tPid, pid)) {
                     isTarget = true;
+                    fprintf(stderr, "[DEBUG-REGISTRY]   -> MATCHED Target PID %u (is_descendant of %u) -> EXCLUDED\n", pid, tPid);
                     break;
                 }
             }
             if (pid != 0 && isTarget) return;
+            
+            fprintf(stderr, "[DEBUG-REGISTRY]   -> NOT Excluded. Adding to capture list.\n");
 
             AppNode node;
             node.id = id;
@@ -585,6 +593,9 @@ void PipewireCapture::Start(DataCallback callback) {
             // doesn't route us to the default sink.
             pw_properties_set(props, PW_KEY_NODE_AUTOCONNECT, "false");
         }
+        
+        // Low latency configuration
+        pw_properties_set(props, PW_KEY_NODE_LATENCY, "256/48000");
 
         pImpl->stream = pw_stream_new(pImpl->core, "electron-screenshare-capture", props);
         if (!pImpl->stream) {
