@@ -80,7 +80,6 @@ void JackCapture::Start(DataCallback callback) {
 }
 
 void JackCapture::Stop() {
-    if (!isCapturing.load()) return;
     isCapturing.store(false);
     
     if (pImpl->captureThread.joinable()) {

@@ -626,7 +626,6 @@ void PipewireCapture::Start(DataCallback callback) {
 
 void PipewireCapture::Stop() {
 #if 1
-    if (!isCapturing.load()) return;
     isCapturing.store(false);
 
     // The captureThread will naturally wake up within 100ms and handle cleanup.

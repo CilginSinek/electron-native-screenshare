@@ -67,7 +67,6 @@ void AlsaCapture::Start(DataCallback callback) {
 }
 
 void AlsaCapture::Stop() {
-    if (!isCapturing.load()) return;
     isCapturing.store(false);
     
     if (pImpl->captureThread.joinable()) {

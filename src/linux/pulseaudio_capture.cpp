@@ -354,6 +354,50 @@ void PulseAudioCapture::Start(DataCallback callback) {
     isCapturing.store(true);
 
     pImpl->captureThread = std::thread([this]() {
+        // Wait for context to be ready
+        int ret = 0;
+        int waitRetries = 100; // 500ms timeout
+        while (isCapturing.load() && !pImpl->contextReady && waitRetries > 0) {
+            std::lock_guard<std::mutex> lock(pImpl->mutex);
+            my_pa_mainloop_iterate(pImpl->mainloop, 0, &ret);
+            waitRetries--;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+
+        if (!pImpl->contextReady) {
+            std::cerr << "[electron-native-screenshare] PulseAudio context failed to become ready" << std::endl;
+            isCapturing.store(false);
+            return;
+        }
+
+        // Fetch server info to get default sink/monitor
+        struct InfoData {
+            PulseAudioCapture::Impl* impl;
+            bool done;
+        } infoData = {pImpl, false};
+
+        {
+            std::lock_guard<std::mutex> lock(pImpl->mutex);
+            pa_operation* op = my_pa_context_get_server_info(pImpl->context, [](pa_context*, const pa_server_info* i, void* userdata) {
+                auto* data = static_cast<InfoData*>(userdata);
+                if (i && i->default_sink_name) {
+                    data->impl->actualSinkName = i->default_sink_name;
+                    data->impl->defaultMonitorSource = std::string(i->default_sink_name) + ".monitor";
+                }
+                data->done = true;
+            }, &infoData);
+            
+            if (op) my_pa_operation_unref(op);
+        }
+
+        // Wait up to 100ms for server info
+        for (int i = 0; i < 20; i++) {
+            if (infoData.done) break;
+            std::lock_guard<std::mutex> lock(pImpl->mutex);
+            my_pa_mainloop_iterate(pImpl->mainloop, 0, &ret);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+
         pa_sample_spec ss;
         ss.format = PA_SAMPLE_FLOAT32LE;
         ss.rate = 48000;
@@ -368,8 +412,10 @@ void PulseAudioCapture::Start(DataCallback callback) {
 
         my_pa_stream_set_read_callback(pImpl->stream, stream_read_cb, this);
 
-        const char* source = pImpl->includeMode ? pImpl->virtualMonitorSource.c_str() : pImpl->defaultMonitorSource.c_str();
-        if (my_pa_stream_connect_record(pImpl->stream, source, nullptr, PA_STREAM_NOFLAGS) < 0) {
+        const char* sourceStr = pImpl->includeMode ? pImpl->virtualMonitorSource.c_str() : pImpl->defaultMonitorSource.c_str();
+        if (sourceStr && sourceStr[0] == '\0') sourceStr = nullptr;
+
+        if (my_pa_stream_connect_record(pImpl->stream, sourceStr, nullptr, PA_STREAM_NOFLAGS) < 0) {
             std::cerr << "[electron-native-screenshare] Failed to connect PulseAudio record stream" << std::endl;
             isCapturing.store(false);
             return;
@@ -430,7 +476,6 @@ void PulseAudioCapture::Start(DataCallback callback) {
 
 void PulseAudioCapture::Stop() {
 #if 1
-    if (!isCapturing.load()) return;
     isCapturing.store(false);
 
     if (pImpl->captureThread.joinable()) {
