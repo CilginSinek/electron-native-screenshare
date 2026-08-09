@@ -80,6 +80,8 @@ struct PulseSyms {
     int (*stream_disconnect)(pa_stream*);
     int (*stream_peek)(pa_stream*, const void**, size_t*);
     void (*stream_drop)(pa_stream*);
+    
+    size_t (*usec_to_bytes)(uint64_t, const pa_sample_spec*);
 };
 
 static PulseSyms* pa_syms = nullptr;
@@ -123,6 +125,7 @@ static bool load_pulse() {
     syms->stream_disconnect = (decltype(syms->stream_disconnect))dlsym(handle, "pa_stream_disconnect");
     syms->stream_peek = (decltype(syms->stream_peek))dlsym(handle, "pa_stream_peek");
     syms->stream_drop = (decltype(syms->stream_drop))dlsym(handle, "pa_stream_drop");
+    syms->usec_to_bytes = (decltype(syms->usec_to_bytes))dlsym(handle, "pa_usec_to_bytes");
 
     if (!syms->mainloop_new || !syms->context_new || !syms->stream_new) {
         delete syms;
@@ -165,6 +168,7 @@ static bool load_pulse() {
 #define my_pa_stream_disconnect pa_syms->stream_disconnect
 #define my_pa_stream_peek pa_syms->stream_peek
 #define my_pa_stream_drop pa_syms->stream_drop
+#define my_pa_usec_to_bytes pa_syms->usec_to_bytes
 
 struct PulseAudioCapture::Impl {
     pa_mainloop* mainloop = nullptr;
@@ -454,7 +458,7 @@ void PulseAudioCapture::Start(DataCallback callback) {
         attr.tlength = (uint32_t)-1;
         attr.prebuf = (uint32_t)-1;
         attr.minreq = (uint32_t)-1;
-        attr.fragsize = pa_usec_to_bytes(20000, &ss); // 20ms latency
+        attr.fragsize = my_pa_usec_to_bytes(20000, &ss); // 20ms latency
 
         if (my_pa_stream_connect_record(pImpl->stream, sourceStr, &attr, PA_STREAM_ADJUST_LATENCY) < 0) {
             std::cerr << "[electron-native-screenshare] Failed to connect PulseAudio record stream" << std::endl;
