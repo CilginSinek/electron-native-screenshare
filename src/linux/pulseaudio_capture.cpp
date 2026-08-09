@@ -7,6 +7,29 @@
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
+#include <atomic>
+#include <vector>
+#include <cstdlib>
+
+static bool is_debug_mode() {
+    static bool checked = false;
+    static bool is_debug = false;
+    if (!checked) {
+        const char* env = getenv("NODE_ENV");
+        if (env && std::string(env) == "development") {
+            is_debug = true;
+        } else {
+            const char* ens_env = getenv("ENS_DEBUG");
+            if (ens_env && std::string(ens_env) == "1") {
+                is_debug = true;
+            }
+        }
+        checked = true;
+    }
+    return is_debug;
+}
+
+#define DEBUG_PRINTF(...) do { if (is_debug_mode()) fprintf(stderr, __VA_ARGS__); } while(0)
 
 static bool is_descendant_pid(uint32_t target_pid, uint32_t query_pid) {
     if (target_pid == query_pid) return true;
@@ -243,29 +266,35 @@ static void sink_input_cb(pa_context* c, const pa_sink_input_info* i, int eol, v
 
     uint32_t pid = (uint32_t)atoi(pidStr);
     
-    fprintf(stderr, "[DEBUG-SINK] Found Sink Input id=%d, name='%s', pid=%u\n", 
+    DEBUG_PRINTF("[DEBUG-SINK] Found Sink Input id=%d, name='%s', pid=%u\n", 
             i->index, nameStr ? nameStr : "null", pid);
 
+    bool isSelf = is_descendant_pid(getpid(), pid);
     bool isTarget = false;
     for (uint32_t targetPid : impl->targetPids) {
         if (is_descendant_pid(targetPid, pid)) {
             isTarget = true;
-            fprintf(stderr, "[DEBUG-SINK]   -> MATCHED Target PID %u (is_descendant of %u) -> IS_TARGET\n", pid, targetPid);
+            DEBUG_PRINTF("[DEBUG-SINK]   -> MATCHED Target PID %u (is_descendant of %u)\n", pid, targetPid);
             break;
         }
     }
 
-    bool shouldBeOnVirtualSink = (impl->includeMode && isTarget) || (!impl->includeMode && !isTarget);
+    bool shouldBeOnVirtualSink;
+    if (impl->includeMode) {
+        shouldBeOnVirtualSink = isTarget && !isSelf;
+    } else {
+        shouldBeOnVirtualSink = !isTarget && !isSelf;
+    }
 
     if (shouldBeOnVirtualSink) {
         if (impl->virtualSinkIndex != (uint32_t)-1 && i->sink != impl->virtualSinkIndex) {
-            fprintf(stderr, "[DEBUG-SINK]   -> Moving to virtual sink.\n");
+            DEBUG_PRINTF("[DEBUG-SINK]   -> Moving to virtual sink.\n");
             pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->virtualSinkName.c_str(), nullptr, nullptr);
             if (opMv) my_pa_operation_unref(opMv);
         }
     } else {
         if (impl->virtualSinkIndex != (uint32_t)-1 && i->sink == impl->virtualSinkIndex) {
-            fprintf(stderr, "[DEBUG-SINK]   -> Moving BACK to actual sink (fixing auto-route).\n");
+            DEBUG_PRINTF("[DEBUG-SINK]   -> Moving BACK to actual sink (fixing auto-route).\n");
             pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->actualSinkName.c_str(), nullptr, nullptr);
             if (opMv) my_pa_operation_unref(opMv);
         }

@@ -21,6 +21,28 @@
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
+#include <cstdlib>
+
+static bool is_debug_mode() {
+    static bool checked = false;
+    static bool is_debug = false;
+    if (!checked) {
+        const char* env = getenv("NODE_ENV");
+        if (env && std::string(env) == "development") {
+            is_debug = true;
+        } else {
+            const char* ens_env = getenv("ENS_DEBUG");
+            if (ens_env && std::string(ens_env) == "1") {
+                is_debug = true;
+            }
+        }
+        checked = true;
+    }
+    return is_debug;
+}
+
+#define DEBUG_PRINTF(...) do { if (is_debug_mode()) fprintf(stderr, __VA_ARGS__); } while(0)
+#define DEBUG_COUT(msg) do { if (is_debug_mode()) { std::cout << msg << std::endl; } } while(0)
 
 static bool is_descendant_pid(uint32_t target_pid, uint32_t query_pid) {
     if (target_pid == query_pid) return true;
@@ -285,13 +307,13 @@ static void tryCreateLinks(PipewireCapture::Impl* impl) {
                         struct pw_proxy* link = (struct pw_proxy*)pw_core_create_object(
                             impl->core, "link-factory", PW_TYPE_INTERFACE_Link, PW_VERSION_LINK, &dict, 0);
                         if (link) {
-                            std::cout << "[DEBUG] PipeWire created link: outNode=" << app.id 
+                            DEBUG_COUT("[DEBUG] PipeWire created link: outNode=" << app.id 
                                       << " outPort=" << outPort.id 
                                       << " -> inNode=" << impl->myNodeId 
-                                      << " inPort=" << inPort.id << std::endl;
+                                      << " inPort=" << inPort.id);
                             impl->activeLinksMap[linkKey] = link;
                         } else {
-                            std::cout << "[DEBUG] PipeWire failed to create link!" << std::endl;
+                            DEBUG_COUT("[DEBUG] PipeWire failed to create link!");
                         }
                     }
                     // We found a match for this output port, move to the next output port
@@ -314,10 +336,10 @@ static void onStreamStateChanged(void* userdata, enum pw_stream_state old,
         std::lock_guard<std::mutex> lock(self->pImpl->mutex);
         if (self->pImpl->myNodeId == PW_ID_ANY) {
             self->pImpl->myNodeId = pw_stream_get_node_id(self->pImpl->stream);
-            std::cout << "[DEBUG] Stream Node ID resolved: " << self->pImpl->myNodeId << std::endl;
+            DEBUG_COUT("[DEBUG] Stream Node ID resolved: " << self->pImpl->myNodeId);
             if (self->pImpl->allInPorts.count(self->pImpl->myNodeId)) {
                 self->pImpl->myInPorts = self->pImpl->allInPorts[self->pImpl->myNodeId];
-                std::cout << "[DEBUG] Grabbed " << self->pImpl->myInPorts.size() << " input ports retroactively." << std::endl;
+                DEBUG_COUT("[DEBUG] Grabbed " << self->pImpl->myInPorts.size() << " input ports retroactively.");
             }
             tryCreateLinks(self->pImpl);
         }
@@ -339,7 +361,7 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
     PipewireCapture::Impl* impl = static_cast<PipewireCapture::Impl*>(userdata);
     
     // DEBUG: print ALL globals to see if Ports are even being announced
-    std::cout << "[DEBUG-REGISTRY] Global: id=" << id << " type=" << type << std::endl;
+    DEBUG_COUT("[DEBUG-REGISTRY] Global: id=" << id << " type=" << type);
 
     if (!props) return;
 
@@ -353,34 +375,41 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
             const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
             uint32_t pid = pidStr ? (uint32_t)atoi(pidStr) : 0;
             
-            fprintf(stderr, "[DEBUG-REGISTRY] Found Audio Output Node id=%d, name='%s', app='%s', pid=%u\n", 
+            DEBUG_PRINTF("[DEBUG-REGISTRY] Found Audio Output Node id=%d, name='%s', app='%s', pid=%u\n", 
                     id, nameStr ? nameStr : "null", appNameStr ? appNameStr : "null", pid);
 
+            bool isSelf = is_descendant_pid(getpid(), pid);
             bool isTarget = false;
             for (uint32_t tPid : impl->targetPids) {
                 if (is_descendant_pid(tPid, pid)) {
                     isTarget = true;
-                    fprintf(stderr, "[DEBUG-REGISTRY]   -> MATCHED Target PID %u (is_descendant of %u) -> IS_TARGET\n", pid, tPid);
+                    DEBUG_PRINTF("[DEBUG-REGISTRY]   -> MATCHED Target PID %u (is_descendant of %u)\n", pid, tPid);
                     break;
                 }
             }
-            bool shouldLink = impl->includeMode ? isTarget : !isTarget;
+            
+            bool shouldLink;
+            if (impl->includeMode) {
+                shouldLink = isTarget && !isSelf;
+            } else {
+                shouldLink = !isTarget && !isSelf;
+            }
             if (!shouldLink) {
-                fprintf(stderr, "[DEBUG-REGISTRY]   -> Ignoring node for capture (shouldLink=false).\n");
+                DEBUG_PRINTF("[DEBUG-REGISTRY]   -> Ignoring node for capture (isTarget=%d, isSelf=%d).\n", isTarget, isSelf);
                 return;
             }
             
-            fprintf(stderr, "[DEBUG-REGISTRY]   -> Adding to capture list (shouldLink=true).\n");
+            DEBUG_PRINTF("[DEBUG-REGISTRY]   -> Adding to capture list (isTarget=%d, isSelf=%d).\n", isTarget, isSelf);
 
             AppNode node;
             node.id = id;
             node.pid = pid;
             if (impl->allOutPorts.count(id)) {
                 node.outPorts = impl->allOutPorts[id];
-                std::cout << "[DEBUG] Grabbed " << node.outPorts.size() << " output ports retroactively." << std::endl;
+                DEBUG_COUT("[DEBUG] Grabbed " << node.outPorts.size() << " output ports retroactively.");
             }
             impl->appNodes[id] = node;
-            std::cout << "[DEBUG] Discovered App Node: " << id << " PID: " << pid << std::endl;
+            DEBUG_COUT("[DEBUG] Discovered App Node: " << id << " PID: " << pid);
             tryCreateLinks(impl);
         }
     } else if (strcmp(type, PW_TYPE_INTERFACE_Port) == 0) {
@@ -398,7 +427,7 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
         if (strcmp(direction, "in") == 0) {
             impl->allInPorts[nodeId].push_back(pi);
             if (nodeId == impl->myNodeId) {
-                std::cout << "[DEBUG] Discovered our Input Port: " << id << " Channel: " << pi.channel << std::endl;
+                DEBUG_COUT("[DEBUG] Discovered our Input Port: " << id << " Channel: " << pi.channel);
                 impl->myInPorts.push_back(pi);
                 tryCreateLinks(impl);
             }
@@ -406,7 +435,7 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
             impl->allOutPorts[nodeId].push_back(pi);
             auto it = impl->appNodes.find(nodeId);
             if (it != impl->appNodes.end()) {
-                std::cout << "[DEBUG] Discovered App Output Port: " << id << " for Node: " << nodeId << " Channel: " << pi.channel << std::endl;
+                DEBUG_COUT("[DEBUG] Discovered App Output Port: " << id << " for Node: " << nodeId << " Channel: " << pi.channel);
                 it->second.outPorts.push_back(pi);
                 tryCreateLinks(impl);
             }
