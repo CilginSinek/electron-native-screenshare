@@ -18,6 +18,39 @@
 #include <mutex>
 #include <vector>
 #include <map>
+#include <cstdio>
+#include <unistd.h>
+
+static bool is_descendant_pid(uint32_t target_pid, uint32_t query_pid) {
+    if (target_pid == query_pid) return true;
+    if (target_pid == 0 || query_pid == 0) return false;
+    
+    uint32_t current_pid = query_pid;
+    while (current_pid > 1) {
+        char path[256];
+        snprintf(path, sizeof(path), "/proc/%u/stat", current_pid);
+        FILE* f = fopen(path, "r");
+        if (!f) break;
+        
+        uint32_t pid;
+        char comm[256];
+        char state;
+        uint32_t ppid = 0;
+        
+        // Format: %d (%s) %c %d ...
+        // We only care about the 4th field (ppid)
+        if (fscanf(f, "%u %s %c %u", &pid, comm, &state, &ppid) == 4) {
+            fclose(f);
+            if (ppid == target_pid) return true;
+            if (ppid == current_pid) break; // cycle or root
+            current_pid = ppid;
+        } else {
+            fclose(f);
+            break;
+        }
+    }
+    return false;
+}
 
 #if 1
 #include <dlfcn.h>
@@ -321,7 +354,7 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
             uint32_t pid = pidStr ? (uint32_t)atoi(pidStr) : 0;
             if (pid != 0) {
                 for (uint32_t tPid : impl->targetPids) {
-                    if (pid == tPid) {
+                    if (is_descendant_pid(tPid, pid)) {
                         impl->targetNodeId = id;
                         break;
                     }
@@ -339,10 +372,10 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
             const char* pidStr = spa_dict_lookup(props, PW_KEY_APP_PROCESS_ID);
             uint32_t pid = pidStr ? (uint32_t)atoi(pidStr) : 0;
             
-            // Exclude the target PIDs!
+            // Exclude the target PIDs (and their descendants)!
             bool isTarget = false;
             for (uint32_t tPid : impl->targetPids) {
-                if (pid == tPid) {
+                if (is_descendant_pid(tPid, pid)) {
                     isTarget = true;
                     break;
                 }

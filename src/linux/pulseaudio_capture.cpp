@@ -4,6 +4,39 @@
 #include <thread>
 #include <mutex>
 #include <chrono>
+#include <cstdio>
+#include <unistd.h>
+
+static bool is_descendant_pid(uint32_t target_pid, uint32_t query_pid) {
+    if (target_pid == query_pid) return true;
+    if (target_pid == 0 || query_pid == 0) return false;
+    
+    uint32_t current_pid = query_pid;
+    while (current_pid > 1) {
+        char path[256];
+        snprintf(path, sizeof(path), "/proc/%u/stat", current_pid);
+        FILE* f = fopen(path, "r");
+        if (!f) break;
+        
+        uint32_t pid;
+        char comm[256];
+        char state;
+        uint32_t ppid = 0;
+        
+        // Format: %d (%s) %c %d ...
+        // We only care about the 4th field (ppid)
+        if (fscanf(f, "%u %s %c %u", &pid, comm, &state, &ppid) == 4) {
+            fclose(f);
+            if (ppid == target_pid) return true;
+            if (ppid == current_pid) break; // cycle or root
+            current_pid = ppid;
+        } else {
+            fclose(f);
+            break;
+        }
+    }
+    return false;
+}
 
 #if 1
 #include <dlfcn.h>
@@ -198,7 +231,7 @@ static void sink_input_cb(pa_context* c, const pa_sink_input_info* i, int eol, v
 
     bool isTarget = false;
     for (uint32_t targetPid : impl->targetPids) {
-        if (pid == targetPid) {
+        if (is_descendant_pid(targetPid, pid)) {
             isTarget = true;
             break;
         }
@@ -208,8 +241,9 @@ static void sink_input_cb(pa_context* c, const pa_sink_input_info* i, int eol, v
         // Move app to virtual sink so we capture it quietly
         pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->virtualSinkName.c_str(), nullptr, nullptr);
         if (opMv) my_pa_operation_unref(opMv);
-    } else if (!impl->includeMode && isTarget) {
-        // Exclude mode
+    } else if (!impl->includeMode && !isTarget) {
+        // Exclude mode: Move NON-TARGET apps to the virtual sink!
+        // Target app remains on Hardware Sink (so user hears it but it is not captured)
         pa_operation* opMv = my_pa_context_move_sink_input_by_name(c, i->index, impl->virtualSinkName.c_str(), nullptr, nullptr);
         if (opMv) my_pa_operation_unref(opMv);
     }
@@ -321,21 +355,11 @@ int PulseAudioCapture::Initialize(const std::vector<uint32_t>& processIds, bool 
     pa_operation* opModNull = my_pa_context_load_module(pImpl->context, "module-null-sink", nullSinkArgs.c_str(), module_null_sink_loaded_cb, pImpl);
     run_pulse_operations_sync(pImpl, opModNull);
 
-    // If we moved the app to a null sink, we also need loopback so they can still hear it
-    // Wait, in includeMode: we record from virtualSink.monitor, but loopback to actualSink so user hears it.
-    // In excludeMode: we record from actualSink.monitor, but loopback virtualSink to actualSink?
-    // Exclude mode loopback won't work well because if we loop it back to actualSink, we capture it AGAIN!
-    // For now we will connect loopback to hardware device directly? 
-    // PulseAudio loopback is too complex for full process audio exclusion perfectly.
-    // For now, simple loopback: load "module-loopback" from virtualSink.monitor to actual hardware sink.
-    
+    // In both modes, we capture from virtualMonitorSource and loop it back to the actual hardware sink.
+    // Include mode: Only the target app is on the virtual sink.
+    // Exclude mode: All NON-target apps are on the virtual sink.
+    // Thus, we ALWAYS capture the virtual sink, and we ALWAYS loop it back so the user hears it.
     std::string loopbackArgs = "source=" + pImpl->virtualMonitorSource + " sink=" + pImpl->actualSinkName;
-    if (!pImpl->includeMode) {
-      // In exclude mode, we CANNOT loopback without it bleeding into our capture of actualSinkName.monitor.
-      // So the user won't hear the excluded sound, or we omit loopback.
-      // But in include mode we CAN loopback without bleeding, because we capture from virtualMonitorSource directly.
-    }
-    
     pa_operation* opModLoop = my_pa_context_load_module(pImpl->context, "module-loopback", loopbackArgs.c_str(), module_loopback_loaded_cb, pImpl);
     run_pulse_operations_sync(pImpl, opModLoop);
 
@@ -412,7 +436,7 @@ void PulseAudioCapture::Start(DataCallback callback) {
 
         my_pa_stream_set_read_callback(pImpl->stream, stream_read_cb, this);
 
-        const char* sourceStr = pImpl->includeMode ? pImpl->virtualMonitorSource.c_str() : pImpl->defaultMonitorSource.c_str();
+        const char* sourceStr = pImpl->virtualMonitorSource.c_str();
         if (sourceStr && sourceStr[0] == '\0') sourceStr = nullptr;
 
         if (my_pa_stream_connect_record(pImpl->stream, sourceStr, nullptr, PA_STREAM_NOFLAGS) < 0) {
