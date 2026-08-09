@@ -59,6 +59,8 @@ struct PipewireSyms {
     void (*proxy_destroy)(struct pw_proxy*);
     struct pw_proxy* (*proxy_new)(struct pw_proxy*, const char*, uint32_t, size_t);
     uint32_t (*proxy_get_id)(struct pw_proxy*);
+    struct pw_buffer* (*stream_dequeue_buffer)(struct pw_stream*);
+    int (*stream_queue_buffer)(struct pw_stream*, struct pw_buffer*);
 };
 static PipewireSyms* pw_syms = nullptr;
 
@@ -93,6 +95,8 @@ static bool load_pipewire() {
     syms->stream_get_node_id  = (decltype(syms->stream_get_node_id)) dlsym(handle, "pw_stream_get_node_id");
     syms->stream_add_listener = (decltype(syms->stream_add_listener))dlsym(handle, "pw_stream_add_listener");
     syms->stream_connect      = (decltype(syms->stream_connect))     dlsym(handle, "pw_stream_connect");
+    syms->stream_dequeue_buffer = (decltype(syms->stream_dequeue_buffer))dlsym(handle, "pw_stream_dequeue_buffer");
+    syms->stream_queue_buffer = (decltype(syms->stream_queue_buffer))dlsym(handle, "pw_stream_queue_buffer");
 
     // All critical symbols must resolve — any null means the library is too old or broken.
     if (!syms->init             || !syms->main_loop_new    || !syms->main_loop_destroy ||
@@ -100,7 +104,8 @@ static bool load_pipewire() {
         !syms->context_connect  || !syms->core_disconnect  || !syms->stream_new       ||
         !syms->stream_destroy   || !syms->stream_get_node_id || !syms->stream_add_listener ||
         !syms->stream_connect   || !syms->properties_new   || !syms->proxy_destroy    ||
-        !syms->proxy_new        || !syms->proxy_get_id) {
+        !syms->proxy_new        || !syms->proxy_get_id     || !syms->stream_dequeue_buffer ||
+        !syms->stream_queue_buffer) {
         delete syms;
         dlclose(handle);
         return false;
@@ -129,6 +134,8 @@ static bool load_pipewire() {
 #define pw_properties_set pw_syms->properties_set
 #define pw_stream_state_as_string pw_syms->stream_state_as_string
 #define pw_proxy_destroy pw_syms->proxy_destroy
+#define pw_stream_dequeue_buffer pw_syms->stream_dequeue_buffer
+#define pw_stream_queue_buffer pw_syms->stream_queue_buffer
 
 extern "C" struct pw_proxy* my_pw_proxy_new(struct pw_proxy *factory, const char *type, uint32_t version, size_t user_data_size) {
     if (!pw_syms || !pw_syms->proxy_new) return nullptr;
@@ -633,9 +640,16 @@ void PipewireCapture::Stop() {
 // --- getPidFromWindowId using X11 _NET_WM_PID ---
 
 #if 1
-#include <X11/Xlib.h>
-#include <X11/Xatom.h>
 #include <dlfcn.h>
+typedef void Display;
+typedef unsigned long Window;
+typedef unsigned long Atom;
+typedef int Bool;
+#define None 0L
+#define True 1
+#define False 0
+#define Success 0
+#define XA_CARDINAL ((Atom) 6)
 
 struct X11Syms {
     Display* (*XOpenDisplay)(const char*);
