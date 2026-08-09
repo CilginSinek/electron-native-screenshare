@@ -364,8 +364,7 @@ static void onRegistryGlobal(void* userdata, uint32_t id,
                     break;
                 }
             }
-            
-            bool shouldLink = impl->includeMode ? isTarget : (pid != 0 && !isTarget);
+            bool shouldLink = impl->includeMode ? isTarget : !isTarget;
             if (!shouldLink) {
                 fprintf(stderr, "[DEBUG-REGISTRY]   -> Ignoring node for capture (shouldLink=false).\n");
                 return;
