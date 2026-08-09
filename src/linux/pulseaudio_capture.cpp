@@ -435,7 +435,7 @@ void PulseAudioCapture::Start(DataCallback callback) {
             }
         });
 
-        int ret = 0;
+        ret = 0;
         while (isCapturing.load()) {
             std::lock_guard<std::mutex> lock(pImpl->mutex);
             my_pa_mainloop_iterate(pImpl->mainloop, 0, &ret);
